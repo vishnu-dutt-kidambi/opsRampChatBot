@@ -1,0 +1,19 @@
+{
+    "files.watcherExclude": {
+        "**/target": true
+    },
+    "go.gopath": "/Users/a60168034/go",
+    "go.goroot": "/opt/homebrew/opt/go/libexec",
+    "go.toolsGopath": "/Users/a60168034/go",
+    "go.alternateTools": {
+        "dlv": "/Users/a60168034/go/bin/dlv"
+    },
+    "go.toolsEnvVars": {
+        "GOPATH": "/Users/a60168034/go",
+        "GOROOT": "/opt/homebrew/opt/go/libexec",
+        "PATH": "/Users/a60168034/go/bin:/opt/homebrew/bin:/opt/homebrew/opt/go/libexec/bin:${env:PATH}"
+    },
+    "terminal.integrated.env.osx": {
+        "PATH": "/Users/a60168034/go/bin:/opt/homebrew/bin:/opt/homebrew/opt/go/libexec/bin:${env:PATH}"
+    }
+}

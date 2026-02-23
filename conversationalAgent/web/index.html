@@ -1,0 +1,732 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OpsRamp ChatBot</title>
+    <style>
+        :root {
+            --bg: #0f1117;
+            --surface: #1a1d27;
+            --surface2: #242736;
+            --border: #2e3241;
+            --primary: #6366f1;
+            --primary-hover: #818cf8;
+            --text: #e2e8f0;
+            --text-muted: #94a3b8;
+            --user-bg: #312e81;
+            --agent-bg: #1e293b;
+            --critical: #ef4444;
+            --warning: #f59e0b;
+            --success: #22c55e;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* Header */
+        .header {
+            background: var(--surface);
+            border-bottom: 1px solid var(--border);
+            padding: 12px 24px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            flex-shrink: 0;
+        }
+
+        .header-icon {
+            width: 36px;
+            height: 36px;
+            background: var(--primary);
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 18px;
+        }
+
+        .header-title {
+            font-size: 16px;
+            font-weight: 600;
+        }
+
+        .header-subtitle {
+            font-size: 12px;
+            color: var(--text-muted);
+        }
+
+        .header-actions {
+            margin-left: auto;
+            display: flex;
+            gap: 8px;
+        }
+
+        .header-btn {
+            background: var(--surface2);
+            border: 1px solid var(--border);
+            color: var(--text-muted);
+            padding: 6px 14px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 13px;
+            transition: all 0.15s;
+        }
+
+        .header-btn:hover {
+            background: var(--border);
+            color: var(--text);
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            background: var(--success);
+            border-radius: 50%;
+            display: inline-block;
+            margin-right: 4px;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+
+            0%,
+            100% {
+                opacity: 1;
+            }
+
+            50% {
+                opacity: 0.5;
+            }
+        }
+
+        /* Chat Area */
+        .chat-container {
+            flex: 1;
+            overflow-y: auto;
+            padding: 24px;
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+
+        .welcome-card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 24px;
+            max-width: 640px;
+            margin: 0 auto;
+        }
+
+        .welcome-card h2 {
+            font-size: 18px;
+            margin-bottom: 12px;
+        }
+
+        .welcome-card p {
+            color: var(--text-muted);
+            font-size: 14px;
+            line-height: 1.5;
+            margin-bottom: 16px;
+        }
+
+        .quick-actions {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+        }
+
+        .quick-action {
+            background: var(--surface2);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 10px 14px;
+            cursor: pointer;
+            font-size: 13px;
+            color: var(--text);
+            text-align: left;
+            transition: all 0.15s;
+        }
+
+        .quick-action:hover {
+            border-color: var(--primary);
+            background: var(--user-bg);
+        }
+
+        .quick-action .qa-icon {
+            font-size: 15px;
+            margin-right: 6px;
+        }
+
+        /* Messages */
+        .message {
+            display: flex;
+            gap: 10px;
+            max-width: 85%;
+            animation: fadeIn 0.2s ease-out;
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(6px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .message.user {
+            align-self: flex-end;
+            flex-direction: row-reverse;
+        }
+
+        .message-avatar {
+            width: 32px;
+            height: 32px;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 14px;
+            flex-shrink: 0;
+        }
+
+        .message.user .message-avatar {
+            background: var(--primary);
+        }
+
+        .message.agent .message-avatar {
+            background: var(--surface2);
+            border: 1px solid var(--border);
+        }
+
+        .message-bubble {
+            padding: 12px 16px;
+            border-radius: 12px;
+            font-size: 14px;
+            line-height: 1.6;
+        }
+
+        .message.user .message-bubble {
+            background: var(--user-bg);
+            border-bottom-right-radius: 4px;
+        }
+
+        .message.agent .message-bubble {
+            background: var(--agent-bg);
+            border: 1px solid var(--border);
+            border-bottom-left-radius: 4px;
+        }
+
+        .message-bubble p {
+            margin-bottom: 8px;
+        }
+
+        .message-bubble p:last-child {
+            margin-bottom: 0;
+        }
+
+        .message-bubble strong {
+            color: #f1f5f9;
+        }
+
+        .message-bubble code {
+            background: rgba(0, 0, 0, 0.3);
+            padding: 1px 5px;
+            border-radius: 4px;
+            font-size: 13px;
+        }
+
+        .message-bubble ul,
+        .message-bubble ol {
+            margin: 6px 0 6px 18px;
+        }
+
+        .message-bubble li {
+            margin-bottom: 4px;
+        }
+
+        /* Tool call indicator */
+        .tool-indicator {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 12px;
+            color: var(--text-muted);
+            padding: 6px 0;
+        }
+
+        .tool-indicator .spinner {
+            width: 14px;
+            height: 14px;
+            border: 2px solid var(--border);
+            border-top-color: var(--primary);
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+
+        @keyframes spin {
+            to {
+                transform: rotate(360deg);
+            }
+        }
+
+        /* Typing indicator */
+        .typing-indicator {
+            display: flex;
+            gap: 10px;
+            max-width: 85%;
+        }
+
+        .typing-dots {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            padding: 14px 18px;
+            background: var(--agent-bg);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            border-bottom-left-radius: 4px;
+        }
+
+        .typing-dots span {
+            width: 7px;
+            height: 7px;
+            background: var(--text-muted);
+            border-radius: 50%;
+            animation: bounce 1.4s infinite;
+        }
+
+        .typing-dots span:nth-child(2) {
+            animation-delay: 0.15s;
+        }
+
+        .typing-dots span:nth-child(3) {
+            animation-delay: 0.3s;
+        }
+
+        @keyframes bounce {
+
+            0%,
+            60%,
+            100% {
+                transform: translateY(0);
+            }
+
+            30% {
+                transform: translateY(-5px);
+            }
+        }
+
+        /* Input Area */
+        .input-area {
+            background: var(--surface);
+            border-top: 1px solid var(--border);
+            padding: 16px 24px;
+            flex-shrink: 0;
+        }
+
+        .input-wrapper {
+            display: flex;
+            gap: 10px;
+            max-width: 900px;
+            margin: 0 auto;
+        }
+
+        .input-field {
+            flex: 1;
+            background: var(--surface2);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 12px 16px;
+            color: var(--text);
+            font-size: 14px;
+            font-family: inherit;
+            outline: none;
+            resize: none;
+            min-height: 44px;
+            max-height: 120px;
+            transition: border-color 0.15s;
+        }
+
+        .input-field:focus {
+            border-color: var(--primary);
+        }
+
+        .input-field::placeholder {
+            color: var(--text-muted);
+        }
+
+        .send-btn {
+            background: var(--primary);
+            border: none;
+            border-radius: 10px;
+            width: 44px;
+            height: 44px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: background 0.15s;
+            flex-shrink: 0;
+        }
+
+        .send-btn:hover:not(:disabled) {
+            background: var(--primary-hover);
+        }
+
+        .send-btn:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+        }
+
+        .send-btn svg {
+            width: 20px;
+            height: 20px;
+            fill: white;
+        }
+
+        /* Scrollbar */
+        .chat-container::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        .chat-container::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        .chat-container::-webkit-scrollbar-thumb {
+            background: var(--border);
+            border-radius: 3px;
+        }
+
+        /* Markdown rendering */
+        .message-bubble h1,
+        .message-bubble h2,
+        .message-bubble h3 {
+            margin: 12px 0 6px 0;
+            font-size: 15px;
+        }
+
+        .message-bubble pre {
+            background: rgba(0, 0, 0, 0.3);
+            padding: 10px 14px;
+            border-radius: 8px;
+            overflow-x: auto;
+            margin: 8px 0;
+            font-size: 13px;
+        }
+
+        .message-bubble table {
+            border-collapse: collapse;
+            margin: 8px 0;
+            width: 100%;
+            font-size: 13px;
+        }
+
+        .message-bubble th,
+        .message-bubble td {
+            border: 1px solid var(--border);
+            padding: 6px 10px;
+            text-align: left;
+        }
+
+        .message-bubble th {
+            background: var(--surface2);
+        }
+    </style>
+</head>
+
+<body>
+
+    <!-- Header -->
+    <div class="header">
+        <div class="header-icon">⚡</div>
+        <div>
+            <div class="header-title">OpsRamp ChatBot</div>
+            <div class="header-subtitle"><span class="status-dot"></span>Connected to Ollama</div>
+        </div>
+        <div class="header-actions">
+            <button class="header-btn" onclick="clearChat()">Clear Chat</button>
+        </div>
+    </div>
+
+    <!-- Chat Messages -->
+    <div class="chat-container" id="chatContainer">
+        <div class="welcome-card">
+            <h2>👋 Welcome to OpsRamp ChatBot</h2>
+            <p>I can help you investigate alerts, search resources, manage incidents, forecast capacity, search
+                operations runbooks, and get
+                infrastructure summaries. Try one of these to get started:</p>
+            <div class="quick-actions">
+                <button class="quick-action" onclick="sendQuick('Show me all critical alerts')">
+                    <span class="qa-icon">🔴</span> Critical alerts
+                </button>
+                <button class="quick-action" onclick="sendQuick('Give me an environment summary')">
+                    <span class="qa-icon">📊</span> Environment summary
+                </button>
+                <button class="quick-action" onclick="sendQuick('Investigate web-server-prod-01')">
+                    <span class="qa-icon">🔍</span> Investigate server
+                </button>
+                <button class="quick-action" onclick="sendQuick('Show me all open incidents')">
+                    <span class="qa-icon">🎫</span> Open incidents
+                </button>
+                <button class="quick-action" onclick="sendQuick('Predict capacity for db-primary-01')">
+                    <span class="qa-icon">📈</span> Capacity forecast
+                </button>
+                <button class="quick-action"
+                    onclick="sendQuick('Which servers are at risk of running out of capacity?')">
+                    <span class="qa-icon">⚠️</span> At-risk resources
+                </button>
+                <button class="quick-action" onclick="sendQuick('What is the runbook for high CPU usage?')">
+                    <span class="qa-icon">📖</span> High CPU runbook
+                </button>
+                <button class="quick-action" onclick="sendQuick('How do I troubleshoot a disk space full alert?')">
+                    <span class="qa-icon">📚</span> Disk full procedure
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Input -->
+    <div class="input-area">
+        <div class="input-wrapper">
+            <textarea class="input-field" id="inputField"
+                placeholder="Ask about alerts, resources, incidents, capacity..." rows="1" onkeydown="handleKey(event)"
+                oninput="autoResize(this)"></textarea>
+            <button class="send-btn" id="sendBtn" onclick="sendMessage()">
+                <svg viewBox="0 0 24 24">
+                    <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" />
+                </svg>
+            </button>
+        </div>
+    </div>
+
+    <script>
+        const chatContainer = document.getElementById('chatContainer');
+        const inputField = document.getElementById('inputField');
+        const sendBtn = document.getElementById('sendBtn');
+        let isWaiting = false;
+
+        function handleKey(e) {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendMessage();
+            }
+        }
+
+        function autoResize(el) {
+            el.style.height = 'auto';
+            el.style.height = Math.min(el.scrollHeight, 120) + 'px';
+        }
+
+        function sendQuick(text) {
+            inputField.value = text;
+            sendMessage();
+        }
+
+        function scrollToBottom() {
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+        }
+
+        function addMessage(role, html) {
+            const isUser = role === 'user';
+            const wrapper = document.createElement('div');
+            wrapper.className = `message ${role}`;
+            wrapper.innerHTML = `
+        <div class="message-avatar">${isUser ? '👤' : '⚡'}</div>
+        <div class="message-bubble">${html}</div>
+      `;
+            chatContainer.appendChild(wrapper);
+            scrollToBottom();
+        }
+
+        function showTyping() {
+            const el = document.createElement('div');
+            el.className = 'typing-indicator';
+            el.id = 'typingIndicator';
+            el.innerHTML = `
+        <div class="message-avatar" style="background:var(--surface2);border:1px solid var(--border)">⚡</div>
+        <div class="typing-dots"><span></span><span></span><span></span></div>
+      `;
+            chatContainer.appendChild(el);
+            scrollToBottom();
+        }
+
+        function hideTyping() {
+            const el = document.getElementById('typingIndicator');
+            if (el) el.remove();
+        }
+
+        // Simple markdown-to-HTML converter
+        function renderMarkdown(text) {
+            let html = text
+                // Code blocks
+                .replace(/```(\w*)\n([\s\S]*?)```/g, '<pre><code>$2</code></pre>')
+                // Bold
+                .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+                // Italic
+                .replace(/\*(.*?)\*/g, '<em>$1</em>')
+                // Inline code
+                .replace(/`([^`]+)`/g, '<code>$1</code>')
+                // Headers
+                .replace(/^### (.*$)/gm, '<h3>$1</h3>')
+                .replace(/^## (.*$)/gm, '<h2>$1</h2>')
+                .replace(/^# (.*$)/gm, '<h1>$1</h1>');
+
+            // Process lines for lists and paragraphs
+            const lines = html.split('\n');
+            let result = '';
+            let inList = false;
+            let listType = '';
+
+            for (let i = 0; i < lines.length; i++) {
+                const line = lines[i];
+                const ulMatch = line.match(/^[\s]*[-•*]\s+(.*)/);
+                const olMatch = line.match(/^[\s]*\d+\.\s+(.*)/);
+
+                if (ulMatch) {
+                    if (!inList || listType !== 'ul') {
+                        if (inList) result += `</${listType}>`;
+                        result += '<ul>';
+                        inList = true;
+                        listType = 'ul';
+                    }
+                    result += `<li>${ulMatch[1]}</li>`;
+                } else if (olMatch) {
+                    if (!inList || listType !== 'ol') {
+                        if (inList) result += `</${listType}>`;
+                        result += '<ol>';
+                        inList = true;
+                        listType = 'ol';
+                    }
+                    result += `<li>${olMatch[1]}</li>`;
+                } else {
+                    if (inList) {
+                        result += `</${listType}>`;
+                        inList = false;
+                    }
+                    if (line.trim() === '') {
+                        result += '<br>';
+                    } else if (!line.startsWith('<h') && !line.startsWith('<pre')) {
+                        result += `<p>${line}</p>`;
+                    } else {
+                        result += line;
+                    }
+                }
+            }
+            if (inList) result += `</${listType}>`;
+            return result;
+        }
+
+        async function sendMessage() {
+            const text = inputField.value.trim();
+            if (!text || isWaiting) return;
+
+            // Remove welcome card on first message
+            const welcome = document.querySelector('.welcome-card');
+            if (welcome) welcome.remove();
+
+            addMessage('user', `<p>${escapeHtml(text)}</p>`);
+            inputField.value = '';
+            inputField.style.height = 'auto';
+            isWaiting = true;
+            sendBtn.disabled = true;
+            showTyping();
+
+            try {
+                const resp = await fetch('/api/chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ message: text })
+                });
+
+                hideTyping();
+
+                if (!resp.ok) {
+                    const err = await resp.text();
+                    addMessage('agent', `<p style="color:var(--critical)">Error: ${escapeHtml(err)}</p>`);
+                    return;
+                }
+
+                const data = await resp.json();
+                addMessage('agent', renderMarkdown(data.answer));
+            } catch (err) {
+                hideTyping();
+                addMessage('agent', `<p style="color:var(--critical)">Connection error: ${escapeHtml(err.message)}</p>`);
+            } finally {
+                isWaiting = false;
+                sendBtn.disabled = false;
+                inputField.focus();
+            }
+        }
+
+        async function clearChat() {
+            try {
+                await fetch('/api/clear', { method: 'POST' });
+            } catch (e) { /* ignore */ }
+
+            chatContainer.innerHTML = '';
+            // Re-add welcome card
+            chatContainer.innerHTML = `
+        <div class="welcome-card">
+          <h2>👋 Welcome to OpsRamp ChatBot</h2>
+          <p>I can help you investigate alerts, search resources, manage incidents, forecast capacity, search operations runbooks, and get infrastructure summaries. Try one of these to get started:</p>
+          <div class="quick-actions">
+            <button class="quick-action" onclick="sendQuick('Show me all critical alerts')">
+              <span class="qa-icon">🔴</span> Critical alerts
+            </button>
+            <button class="quick-action" onclick="sendQuick('Give me an environment summary')">
+              <span class="qa-icon">📊</span> Environment summary
+            </button>
+            <button class="quick-action" onclick="sendQuick('Investigate web-server-prod-01')">
+              <span class="qa-icon">🔍</span> Investigate server
+            </button>
+            <button class="quick-action" onclick="sendQuick('Show me all open incidents')">
+              <span class="qa-icon">🎫</span> Open incidents
+            </button>
+            <button class="quick-action" onclick="sendQuick('Predict capacity for db-primary-01')">
+              <span class="qa-icon">📈</span> Capacity forecast
+            </button>
+            <button class="quick-action" onclick="sendQuick('Which servers are at risk of running out of capacity?')">
+              <span class="qa-icon">⚠️</span> At-risk resources
+            </button>
+            <button class="quick-action" onclick="sendQuick('What is the runbook for high CPU usage?')">
+              <span class="qa-icon">📖</span> High CPU runbook
+            </button>
+            <button class="quick-action" onclick="sendQuick('How do I troubleshoot a disk space full alert?')">
+              <span class="qa-icon">📚</span> Disk full procedure
+            </button>
+          </div>
+        </div>`;
+        }
+
+        function escapeHtml(str) {
+            const div = document.createElement('div');
+            div.textContent = str;
+            return div.innerHTML;
+        }
+
+        // Focus input on load
+        inputField.focus();
+    </script>
+</body>
+
+</html>

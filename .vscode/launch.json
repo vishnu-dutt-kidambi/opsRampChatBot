@@ -1,0 +1,51 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Debug PDF Q&A Agent",
+            "type": "go",
+            "request": "launch",
+            "mode": "debug",
+            "program": "${workspaceFolder}/pdfReaderAIAgent/main.go",
+            "args": [
+                "pdfs/solar_system_guide.pdf"
+            ],
+            "cwd": "${workspaceFolder}/pdfReaderAIAgent",
+            "env": {
+                "OLLAMA_HOST": "http://localhost:11434",
+                "LLM_MODEL": "mistral",
+                "EMBEDDING_MODEL": "nomic-embed-text"
+            },
+            "console": "integratedTerminal"
+        },
+        {
+            "name": "Debug Conversational Agent",
+            "type": "go",
+            "request": "launch",
+            "mode": "debug",
+            "program": "${workspaceFolder}/conversationalAgent/main.go",
+            "cwd": "${workspaceFolder}/conversationalAgent",
+            "env": {
+                "OLLAMA_HOST": "http://localhost:11434",
+                "LLM_MODEL": "llama3.1"
+            },
+            "console": "integratedTerminal"
+        },
+        {
+            "name": "Debug Conversational Agent (Web UI)",
+            "type": "go",
+            "request": "launch",
+            "mode": "debug",
+            "program": "${workspaceFolder}/conversationalAgent",
+            "args": [
+                "--web"
+            ],
+            "cwd": "${workspaceFolder}/conversationalAgent",
+            "env": {
+                "OLLAMA_HOST": "http://localhost:11434",
+                "LLM_MODEL": "llama3.1"
+            },
+            "console": "integratedTerminal"
+        }
+    ]
+}

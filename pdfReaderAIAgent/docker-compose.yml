@@ -1,0 +1,57 @@
+# =============================================================================
+# Docker Compose - Orchestrates Ollama + PDF Q&A Agent
+# =============================================================================
+#
+# SERVICES:
+#   ollama - Local LLM server (runs AI models on your machine, FREE)
+#   app    - Our Go PDF Q&A Agent
+#
+# NO API KEYS OR TOKENS NEEDED! Everything runs locally.
+# =============================================================================
+
+services:
+  # ---------------------------------------------------------------------------
+  # Ollama - Local LLM Server
+  # ---------------------------------------------------------------------------
+  # Ollama runs open-source AI models locally on your machine.
+  # It provides an API that our Go app calls for:
+  #   - Generating embeddings (text → vectors)
+  #   - Generating answers (LLM text generation)
+  #
+  # Models are downloaded once and cached in the 'ollama_data' volume.
+  # ---------------------------------------------------------------------------
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    ports:
+      - "11434:11434" # Ollama API port
+    volumes:
+      - ollama_data:/root/.ollama # Persist downloaded models
+    # NOTE: On Mac, Ollama in Docker uses CPU only (no Metal/GPU).
+    # For GPU acceleration on Mac, install Ollama natively instead.
+
+  # ---------------------------------------------------------------------------
+  # PDF Q&A Agent - Our Go Application
+  # ---------------------------------------------------------------------------
+  app:
+    build: .
+    container_name: pdf-qa-agent
+    depends_on:
+      - ollama
+    environment:
+      # Tell our app where to find Ollama (the Docker service name)
+      - OLLAMA_HOST=http://ollama:11434
+      # Which models to use (these must be pulled first via 'make setup')
+      - LLM_MODEL=mistral
+      - EMBEDDING_MODEL=nomic-embed-text
+    volumes:
+      # Mount the local 'pdfs' folder into the container
+      # Put your PDF files in ./pdfs/ and they'll be accessible
+      - ./pdfs:/app/pdfs
+    # These two settings enable interactive terminal input (for the Q&A loop)
+    stdin_open: true
+    tty: true
+
+# Persistent volume for Ollama's downloaded models
+volumes:
+  ollama_data:
