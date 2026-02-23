@@ -40,7 +40,7 @@ func StartHTTP(addr string, client *opsramp.Client, kb *knowledge.KnowledgeBase)
 // newMCPServer creates the MCP server with all 8 OpsRamp tools registered.
 func newMCPServer(client *opsramp.Client, kb *knowledge.KnowledgeBase) *server.MCPServer {
 	s := server.NewMCPServer(
-		"OpsRamp ChatBot",
+		"opsRamp-mcp-server",
 		"1.0.0",
 		server.WithToolCapabilities(false),
 		server.WithRecovery(),

@@ -1,0 +1,11 @@
+# Docker build context ignore
+.git
+.gitignore
+.vscode
+*.md
+!conversationalAgent/README.md
+conversationalAgent/opsramp-agent
+pdfReaderAIAgent/pdf-qa-agent
+pdfReaderAIAgent/pdfs/
+**/.DS_Store
+**/screenshots/

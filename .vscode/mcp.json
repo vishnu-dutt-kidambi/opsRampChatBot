@@ -1,6 +1,6 @@
 {
     "servers": {
-        "opsramp": {
+        "opsRamp-mcp-server": {
             "type": "stdio",
             "command": "${workspaceFolder}/conversationalAgent/opsramp-agent",
             "args": [

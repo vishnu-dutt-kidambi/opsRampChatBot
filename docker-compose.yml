@@ -1,0 +1,137 @@
+# =============================================================================
+# Docker Compose - OpsRamp ChatBot (Full Stack)
+# =============================================================================
+#
+# TWO MODES:
+#
+# 1) MAC (recommended) — Uses native Ollama with Apple GPU for fast inference:
+#      make docker-web-mac       (or: docker compose --profile mac up web-mac)
+#
+# 2) FULL DOCKER — Everything in containers (CPU-only, slower on Mac):
+#      make docker-web           (or: docker compose up web)
+#
+# SERVICES:
+#   ollama    — Dockerized LLM server (CPU-only on Mac)
+#   web       — Chat UI using dockerized Ollama
+#   web-mac   — Chat UI using native Ollama on host (fast, GPU-accelerated)
+#   mcp       — MCP HTTP server (port 8081) — optional
+#
+# FIRST TIME (full docker mode):
+#   docker compose up -d ollama
+#   docker compose exec ollama ollama pull llama3.1
+#   docker compose exec ollama ollama pull nomic-embed-text
+#   docker compose up web
+#
+# FIRST TIME (mac mode — requires native Ollama running on host):
+#   ollama pull llama3.1 && ollama pull nomic-embed-text
+#   docker compose --profile mac up web-mac
+#
+# NO API KEYS NEEDED — everything runs locally with mock OpsRamp data.
+# =============================================================================
+
+services:
+  # ---------------------------------------------------------------------------
+  # Ollama — Dockerized LLM Server (CPU-only on Mac)
+  # ---------------------------------------------------------------------------
+  ollama:
+    image: ollama/ollama:latest
+    container_name: opsramp-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+
+  # ---------------------------------------------------------------------------
+  # Web UI — Uses dockerized Ollama (CPU-only, slower on Mac)
+  # ---------------------------------------------------------------------------
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: opsramp-web
+    depends_on:
+      ollama:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+    environment:
+      - OLLAMA_HOST=http://ollama:11434
+      - LLM_MODEL=llama3.1
+      - EMBEDDING_MODEL=nomic-embed-text
+      - RUNBOOK_DIR=/app/runbooks
+    command: ["--web"]
+
+  # ---------------------------------------------------------------------------
+  # Web UI (Mac) — Uses native Ollama on host for GPU-accelerated inference
+  # Requires: Ollama running natively (brew install ollama && ollama serve)
+  # ---------------------------------------------------------------------------
+  web-mac:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: opsramp-web-mac
+    ports:
+      - "8080:8080"
+    environment:
+      - OLLAMA_HOST=http://host.docker.internal:11434
+      - LLM_MODEL=llama3.1
+      - EMBEDDING_MODEL=nomic-embed-text
+      - RUNBOOK_DIR=/app/runbooks
+    command: ["--web"]
+    profiles:
+      - mac
+
+  # ---------------------------------------------------------------------------
+  # MCP HTTP Server (http://localhost:8081) — optional
+  # ---------------------------------------------------------------------------
+  mcp:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: opsramp-mcp
+    depends_on:
+      ollama:
+        condition: service_healthy
+    ports:
+      - "8081:8081"
+    environment:
+      - OLLAMA_HOST=http://ollama:11434
+      - LLM_MODEL=llama3.1
+      - EMBEDDING_MODEL=nomic-embed-text
+      - RUNBOOK_DIR=/app/runbooks
+    command: ["--mcp-http"]
+    profiles:
+      - all
+      - mcp
+
+  # ---------------------------------------------------------------------------
+  # CLI — Interactive terminal (attach with docker compose run cli)
+  # ---------------------------------------------------------------------------
+  cli:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: opsramp-cli
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      - OLLAMA_HOST=http://ollama:11434
+      - LLM_MODEL=llama3.1
+      - EMBEDDING_MODEL=nomic-embed-text
+      - RUNBOOK_DIR=/app/runbooks
+    command: []
+    stdin_open: true
+    tty: true
+    profiles:
+      - all
+      - cli
+
+volumes:
+  ollama_data:
