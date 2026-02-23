@@ -1,0 +1,16 @@
+{
+    "servers": {
+        "opsramp": {
+            "type": "stdio",
+            "command": "${workspaceFolder}/conversationalAgent/opsramp-agent",
+            "args": [
+                "--mcp"
+            ],
+            "env": {
+                "OLLAMA_HOST": "http://localhost:11434",
+                "EMBEDDING_MODEL": "nomic-embed-text",
+                "RUNBOOK_DIR": "${workspaceFolder}/conversationalAgent/runbooks"
+            }
+        }
+    }
+}
