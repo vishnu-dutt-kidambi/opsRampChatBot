@@ -1,6 +1,106 @@
 # OpsRamp ChatBot
 
-An AI-powered CLI that lets you query your IT infrastructure using natural language. Built with Go + Ollama, using a tool-calling agent pattern over mock OpsRamp APIs — now with **RAG-powered knowledge base** for operations runbooks and **MCP server mode** for integration with Claude Desktop, VS Code, and other MCP-compatible clients.
+An AI-powered opsRamp assistant that lets you query your IT infrastructure using natural language. Ask about alerts, resources, incidents, capacity forecasts, and operations runbooks — the agent figures out what to look up and responds with clear, actionable answers.
+
+Built with **Go + Ollama**, using a tool-calling agent pattern over mock OpsRamp APIs. Also runs as an **MCP server** for integration with VS Code Copilot, Claude Desktop, and other MCP-compatible clients.
+
+## Web UI
+
+![OpsRamp Agent Web UI](conversationalAgent/screenshots/web-ui.png)
+
+## MCP Server (VS Code Copilot)
+
+![OpsRamp Agent MCP Server](conversationalAgent/screenshots/mcp-server.png)
+
+## What You Can Ask
+
+- **Alerts** — "Show me all critical alerts" · "Any P0 alerts?"
+- **Resources** — "List all AWS resources" · "Show servers in GCP"
+- **Incidents** — "Show open incidents" · "Any urgent tickets?"
+- **Investigation** — "Investigate web-server-prod-01" · "Why is the DB slow?"
+- **Environment** — "Give me an environment summary"
+- **Capacity Forecast** — "Predict capacity for db-primary-01" · "Which resources are at risk?"
+- **Knowledge Base** — "What is the runbook for high CPU?" · "How to fix disk full?" · "Escalation contacts?"
+
+## Capabilities
+
+| Tool | Description |
+|------|-------------|
+| **Search Alerts** | Filter by state (Critical/Warning), priority, resource |
+| **Search Resources** | Find servers across AWS, Azure, GCP, on-prem |
+| **Resource Details** | Deep-dive into configuration, metrics, tags |
+| **Search Incidents** | Filter tickets by status, priority, SLA |
+| **Investigate Resource** | Correlated view of alerts + incidents + metrics for a resource |
+| **Environment Summary** | High-level infrastructure health dashboard |
+| **Capacity Forecasting** | Linear regression on 30-day metric history to predict CPU/memory/disk exhaustion |
+| **Knowledge Base (RAG)** | Retrieval-augmented generation over operations runbooks (PDF) using vector embeddings |
+
+## How MCP Mode Works
+
+In MCP mode, **Copilot (or Claude) is the LLM** — not Ollama. The agent acts as a tool server only.
+
+```
+You (in VS Code / Claude Desktop)
+ │
+ ▼
+Copilot / Claude  ← decides which tools to call
+ │
+ │  MCP protocol (stdio or HTTP)
+ ▼
+opsramp-agent --mcp  ← executes tools, returns JSON
+ │
+ ├─ search_alerts, search_resources, etc. → mock OpsRamp data
+ └─ search_knowledge_base → Ollama embeddings (only Ollama use in MCP mode)
+ │
+ ▼
+Copilot / Claude  ← summarizes results back to you
+```
+
+- **Ollama LLM is NOT used** in MCP mode — Copilot's own model handles reasoning and tool selection
+- **Ollama is only needed** for the embedding model (`nomic-embed-text`) that powers runbook search
+- The 8 tools + their descriptions are advertised via MCP's `initialize` handshake
+
+---
+
+## Quick Start
+
+### Native (recommended for Mac — uses Apple GPU)
+
+```bash
+cd conversationalAgent
+
+# 1. Install Ollama + pull models (~5GB)
+make setup
+
+# 2. Run the agent (choose a mode)
+make run        # Terminal REPL
+make web        # Browser chat UI on http://localhost:8080
+make mcp        # MCP server (stdio) — for Claude Desktop, VS Code, etc.
+make mcp-http   # MCP server (HTTP) on http://localhost:8081
+```
+
+### Docker
+
+```bash
+# Mac (recommended) — App in Docker, Ollama native on host (fast, GPU)
+make docker-web-mac
+
+# Full Docker — Everything in containers (portable, CPU-only on Mac)
+make docker-setup    # First time: pull Ollama image + download models
+make docker-web      # Start Web UI at http://localhost:8080
+```
+
+## Simulated Environment
+
+The mock data simulates a mid-size enterprise with:
+
+- **22 resources** across AWS, Azure, GCP, and on-prem (VMware)
+- **8 active alerts** (3 Critical, 3 Warning, 2 Info)
+- **7 incidents** (5 Open, 2 Resolved)
+- Resource types: Linux, Windows, Azure SQL, Azure Functions, VMware ESXi
+- Roles: web servers, app servers, databases, cache, message queue, Kubernetes, CI/CD
+
+---
 
 ## Architecture
 
@@ -38,62 +138,6 @@ Dual-Mode Architecture:
 │              OpsRamp Client + Knowledge Base          │
 └───────────────────────────────────────────────────────┘
 ```
-
-## Quick Start
-
-### Native (recommended for Mac — uses Apple GPU)
-
-```bash
-cd conversationalAgent
-
-# 1. Install Ollama + pull models (~5GB)
-make setup
-
-# 2. Run the agent (choose a mode)
-make run        # Terminal REPL
-make web        # Browser chat UI on http://localhost:8080
-make mcp        # MCP server (stdio) — for Claude Desktop, VS Code, etc.
-make mcp-http   # MCP server (HTTP) on http://localhost:8081
-```
-
-### Docker
-
-```bash
-# Mac (recommended) — App in Docker, Ollama native on host (fast, GPU)
-make docker-web-mac
-
-# Full Docker — Everything in containers (portable, CPU-only on Mac)
-make docker-setup    # First time: pull Ollama image + download models
-make docker-web      # Start Web UI at http://localhost:8080
-```
-
-## Example Questions
-
-| Category | Example |
-|----------|---------|
-| **Alerts** | "Show me all critical alerts" |
-| **Alerts** | "Any unacknowledged warnings?" |
-| **Resources** | "List all AWS resources" |
-| **Resources** | "What Kubernetes nodes do we have?" |
-| **Incidents** | "What incidents are open?" |
-| **Incidents** | "Are there any SLA-breached tickets?" |
-| **Investigation** | "Investigate web-server-prod-01" |
-| **Investigation** | "What's wrong with db-primary-01?" |
-| **Overview** | "Give me an environment summary" |
-| **Capacity** | "Predict capacity for db-primary-01" |
-| **Capacity** | "Which resources are at risk?" |
-| **Knowledge Base** | "What is the runbook for high CPU usage?" |
-| **Knowledge Base** | "How do I troubleshoot disk space full?" |
-
-## Simulated Environment
-
-The mock data simulates a mid-size enterprise with:
-
-- **22 resources** across AWS, Azure, GCP, and on-prem (VMware)
-- **8 active alerts** (3 Critical, 3 Warning, 2 Info)
-- **7 incidents** (5 Open, 2 Resolved)
-- Resource types: Linux, Windows, Azure SQL, Azure Functions, VMware ESXi
-- Roles: web servers, app servers, databases, cache, message queue, Kubernetes, CI/CD
 
 ## Project Structure
 
