@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 
+	"opsramp-agent/juniper"
 	"opsramp-agent/knowledge"
 	"opsramp-agent/opsramp"
 	"opsramp-agent/tools"
@@ -48,6 +49,7 @@ type Agent struct {
 	model     string
 	client    *opsramp.Client
 	kb        *knowledge.KnowledgeBase
+	juniper   *juniper.Client
 	history   []ChatMessage
 }
 
@@ -100,6 +102,11 @@ func (a *Agent) SetKnowledgeBase(kb *knowledge.KnowledgeBase) {
 	a.kb = kb
 }
 
+// SetJuniperClient attaches a Juniper Mist network client to the agent.
+func (a *Agent) SetJuniperClient(jc *juniper.Client) {
+	a.juniper = jc
+}
+
 // maxToolResultLen caps how much of a tool's JSON output is kept in conversation
 // history. Large results (e.g., 22 resources) are truncated to avoid bloating the
 // LLM context on subsequent calls. The LLM already saw the full result when it
@@ -124,8 +131,17 @@ func (a *Agent) Ask(question string) (string, error) {
 		Content: question,
 	})
 
-	// Allow up to 8 rounds of tool calls to prevent infinite loops
-	maxRounds := 8
+	// Allow up to 12 rounds of tool calls to prevent infinite loops.
+	// A full end-to-end investigation may chain 6+ tools (search_alerts → investigate_resource →
+	// correlate_network → blast_radius → search_knowledge_base → get_remediation_plan),
+	// so 8 was too tight — it left no room for retries on ambiguous queries.
+	maxRounds := 12
+
+	// Track tool calls to detect loops where the LLM keeps calling the same tools.
+	// Small models are prone to repeating investigate_resource / correlate_network
+	// instead of progressing through the full investigation sequence.
+	calledTools := make(map[string]int) // tool_name → call count
+
 	for round := 0; round < maxRounds; round++ {
 		resp, err := a.callLLM()
 		if err != nil {
@@ -137,6 +153,21 @@ func (a *Agent) Ask(question string) (string, error) {
 			a.history = append(a.history, resp.Message)
 
 			for _, tc := range resp.Message.ToolCalls {
+				toolName := tc.Function.Name
+				calledTools[toolName]++
+
+				// Safety-net: block 2nd+ call to the same tool (should rarely fire
+				// now that progress checklists are injected proactively)
+				if calledTools[toolName] > 1 {
+					fmt.Printf("  [agent] DUPLICATE blocked: %s (call #%d) — injecting guidance\n", toolName, calledTools[toolName])
+					guidance := buildDuplicateGuidance(calledTools)
+					a.history = append(a.history, ChatMessage{
+						Role:    "tool",
+						Content: fmt.Sprintf(`{"skipped": true, "reason": "You already called %s and received results. Do NOT call it again.", "next_action": "%s"}`, toolName, guidance),
+					})
+					continue
+				}
+
 				toolResult, err := a.executeTool(tc)
 				if err != nil {
 					toolResult = fmt.Sprintf(`{"error": "%s"}`, err.Error())
@@ -150,6 +181,27 @@ func (a *Agent) Ask(question string) (string, error) {
 					Content: toolResult,
 				})
 			}
+
+			// After processing all tool calls in this round, inject a progress
+			// checklist if any investigation tool was called. This shows the LLM
+			// a clear ✅/⬜ status of completed vs. pending steps so it knows
+			// exactly which tool to call next — preventing repeat loops.
+			hasInvestigationTool := false
+			for _, tc := range resp.Message.ToolCalls {
+				if isInvestigationTool(tc.Function.Name) {
+					hasInvestigationTool = true
+					break
+				}
+			}
+			if hasInvestigationTool {
+				progress := buildProgressChecklist(calledTools)
+				fmt.Printf("  [agent] Progress: %s\n", progress)
+				a.history = append(a.history, ChatMessage{
+					Role:    "tool",
+					Content: progress,
+				})
+			}
+
 			continue
 		}
 
@@ -157,10 +209,32 @@ func (a *Agent) Ask(question string) (string, error) {
 		// Some models (e.g., Mistral) do this — they write the tool name and args
 		// as plain text rather than using the structured tool_calls mechanism.
 		if tc, ok := a.parseToolCallFromText(resp.Message.Content); ok {
+			toolName := tc.Name
+			calledTools[toolName]++
+
+			// Safety-net for text-based tool calls
+			if calledTools[toolName] > 1 {
+				fmt.Printf("  [agent] DUPLICATE blocked (text): %s (call #%d) — injecting guidance\n", toolName, calledTools[toolName])
+				guidance := buildDuplicateGuidance(calledTools)
+				a.history = append(a.history, ChatMessage{
+					Role:    "assistant",
+					Content: resp.Message.Content,
+				})
+				a.history = append(a.history, ChatMessage{
+					Role:    "tool",
+					Content: fmt.Sprintf(`{"skipped": true, "reason": "You already called %s and received results. Do NOT call it again.", "next_action": "%s"}`, toolName, guidance),
+				})
+				continue
+			}
+
 			fmt.Println("  [agent] Detected tool call in text output, executing...")
 			a.history = append(a.history, resp.Message)
 
-			toolResult, err := tools.Execute(a.client, tc, a.kb)
+			opts := tools.ExecuteOptions{
+				KB:      a.kb,
+				Juniper: a.juniper,
+			}
+			toolResult, err := tools.ExecuteWithOptions(a.client, tc, opts)
 			if err != nil {
 				toolResult = fmt.Sprintf(`{"error": "%s"}`, err.Error())
 			}
@@ -171,6 +245,17 @@ func (a *Agent) Ask(question string) (string, error) {
 				Role:    "tool",
 				Content: toolResult,
 			})
+
+			// Inject progress checklist for text-based investigation tool calls
+			if isInvestigationTool(toolName) {
+				progress := buildProgressChecklist(calledTools)
+				fmt.Printf("  [agent] Progress: %s\n", progress)
+				a.history = append(a.history, ChatMessage{
+					Role:    "tool",
+					Content: progress,
+				})
+			}
+
 			continue
 		}
 
@@ -196,7 +281,8 @@ func (a *Agent) parseToolCallFromText(content string) (tools.ToolCall, bool) {
 	toolNames := []string{
 		"search_alerts", "search_resources", "get_resource_details",
 		"search_incidents", "investigate_resource", "get_environment_summary",
-		"predict_capacity", "search_knowledge_base",
+		"predict_capacity", "search_knowledge_base", "correlate_network",
+		"blast_radius", "get_remediation_plan",
 	}
 
 	for _, name := range toolNames {
@@ -248,6 +334,71 @@ func (a *Agent) parseToolCallFromText(content string) (tools.ToolCall, bool) {
 	}
 
 	return tools.ToolCall{}, false
+}
+
+// investigationSequence defines the ordered tool chain for a full investigation.
+// Used by buildProgressChecklist to show the LLM what's done and what's next,
+// and by the duplicate guard as a safety net fallback.
+var investigationSequence = []string{
+	"search_alerts",
+	"investigate_resource",
+	"correlate_network",
+	"blast_radius",
+	"search_knowledge_base",
+	"get_remediation_plan",
+}
+
+// isInvestigationTool returns true if the tool is part of the multi-tool investigation sequence.
+func isInvestigationTool(name string) bool {
+	for _, t := range investigationSequence {
+		if t == name {
+			return true
+		}
+	}
+	return false
+}
+
+// buildProgressChecklist generates a structured progress message showing the LLM
+// which investigation steps are completed (✅) and which are pending (⬜).
+// This is injected after every tool result to proactively guide the LLM to the next step,
+// preventing loops where it re-calls tools it already used.
+func buildProgressChecklist(calledTools map[string]int) string {
+	var completed, pending []string
+	for _, toolName := range investigationSequence {
+		if calledTools[toolName] > 0 {
+			completed = append(completed, toolName)
+		} else {
+			pending = append(pending, toolName)
+		}
+	}
+
+	if len(pending) == 0 {
+		return fmt.Sprintf(
+			`{"_progress": {"completed": ["%s"], "pending": [], "instruction": "ALL investigation steps are DONE. Now compose your final comprehensive answer combining ALL the results above. Do NOT call any more tools."}}`,
+			strings.Join(completed, `", "`),
+		)
+	}
+
+	nextTool := pending[0]
+	return fmt.Sprintf(
+		`{"_progress": {"completed": ["%s"], "pending": ["%s"], "next_tool": "%s", "instruction": "You have completed %d of 6 investigation steps. NEXT: call %s now. Do NOT repeat any completed tool."}}`,
+		strings.Join(completed, `", "`),
+		strings.Join(pending, `", "`),
+		nextTool,
+		len(completed),
+		nextTool,
+	)
+}
+
+// buildDuplicateGuidance is used by the safety-net duplicate guard when the LLM
+// tries to call a tool it already called despite the progress checklist.
+func buildDuplicateGuidance(calledTools map[string]int) string {
+	for _, toolName := range investigationSequence {
+		if calledTools[toolName] == 0 {
+			return fmt.Sprintf("Proceed to the next step: call %s now.", toolName)
+		}
+	}
+	return "All investigation tools have been called. Now compose your final comprehensive answer combining ALL the results you have received."
 }
 
 // ClearHistory resets the conversation history (keeps system prompt).
@@ -362,7 +513,11 @@ func (a *Agent) executeTool(tc LLMToolCall) (string, error) {
 	}
 	fmt.Println()
 
-	result, err := tools.Execute(a.client, toolCall, a.kb)
+	opts := tools.ExecuteOptions{
+		KB:      a.kb,
+		Juniper: a.juniper,
+	}
+	result, err := tools.ExecuteWithOptions(a.client, toolCall, opts)
 	if err != nil {
 		return "", err
 	}
@@ -413,6 +568,27 @@ I'm an OpsRamp Operations Assistant. Here's what I can help you with:
   - Covers: high CPU, disk full, memory leaks, container crashes, network issues, database performance, SSL certificates
   - Example: "What's the runbook for high CPU?" or "How do I troubleshoot disk space issues?"
 
+**Network Correlation (Juniper):**
+  - Correlate server or application issues with Juniper network switch telemetry (packet loss, CRC errors, link flaps, latency, jitter)
+  - Accepts both server names (e.g., "k8s-node-04") and application names (e.g., "payment-service") — app names are automatically resolved to their hosting server
+  - Checks the physical switch port connected to the server to determine if network is the root cause
+  - Covers: Juniper EX switches managed via Mist API, port errors, duplex mismatch, link stability
+  - Example: "Correlate network for payment-service" or "Is network causing the latency on web-server-prod-01?"
+
+**Blast Radius Analysis:**
+  - Map the full impact of an infrastructure issue across applications, services, and user groups
+  - Accepts both server names and application names — app names are resolved to the hosting server
+  - Traverses the dependency graph: server → applications → downstream services → end users
+  - Shows affected application count, user count, severity, and business impact
+  - Example: "What's the blast radius for payment-service?" or "How many users are affected by k8s-node-04?"
+
+**Guided Remediation:**
+  - Generate step-by-step remediation plans with exact CLI commands for network issues
+  - Accepts both server names and application names — app names are resolved to the hosting server
+  - Each step includes the command, target device, risk level, and approval requirements
+  - Covers: interface bounce, speed/duplex configuration, cable check, QoS analysis
+  - Example: "Give me a remediation plan for payment-service" or "How do I fix the network issue on k8s-node-04?"
+
 Examples of meta questions you must answer WITHOUT tools:
 - "What can you do?" / "What are your capabilities?" / "What are you capable of?"
 - "Who are you?" / "Tell me about yourself" / "How can you help me?"
@@ -423,15 +599,66 @@ TOOL USAGE RULES:
 - When a user asks about specific alerts, resources, incidents, or infrastructure STATE, you MUST call the appropriate tool first. NEVER fabricate data.
 - When a user asks about capacity predictions, forecasts, trends, or when a resource will run out of space/CPU/memory, use the predict_capacity tool.
 - When a user asks about runbooks, troubleshooting procedures, how to fix something, escalation contacts, or incident response steps, use the search_knowledge_base tool.
+- For overview/summary questions, use the get_environment_summary tool.
 - Do NOT describe what tool you would use in text. Actually invoke the tool using the function calling mechanism.
 - NEVER invent resource names like "Server-A" or "Database-X". All data must come from tool results.
-- For overview/summary questions, use the get_environment_summary tool.
+- When the user mentions an application name (e.g., "payment app", "payment-service", "order-service", "checkout"), you can pass it directly to correlate_network, blast_radius, or get_remediation_plan. You do NOT need to first look up the server name — the tools resolve application names to servers automatically.
 
-AFTER receiving tool results:
-- Summarize the data clearly with bullet points
-- Highlight critical items first
-- Include specific resource names, IPs, and metric percentages from the tool output
-- Suggest next steps when issues are found
+MULTI-TOOL INVESTIGATION (CRITICAL — READ CAREFULLY):
+When a user asks WHY something is slow, broken, or having issues (e.g., "Why is the payment app slow?",
+"What's wrong with order-service?", "Investigate the checkout issues"), you MUST run a FULL multi-tool
+investigation. Do NOT stop after just one tool. The slowness could be caused by server-level problems
+(high CPU, memory, disk), application-level alerts, OR network-level issues. You must check ALL layers.
+
+Call ALL of the following 6 tools in this exact sequence:
+
+  Step 1: search_alerts(query="<app or service name, e.g., payment>")
+          → Find any active alerts related to the application or its hosting infrastructure.
+          → This may reveal HTTP latency alerts, CPU spikes, memory pressure, etc.
+          → The alert results will tell you WHICH SERVER hosts the app (e.g., k8s-node-04).
+
+  Step 2: investigate_resource(resource_name="<server name from Step 1's alert results>")
+          → Deep-dive into the server hosting the app — check CPU, memory, disk, network metrics.
+          → If metrics are normal but the app is still slow, the problem is likely NETWORK, not server.
+          → If metrics are abnormal, the server itself may be the root cause.
+
+  Step 3: correlate_network(resource_name="<app or server name>")
+          → Check the Juniper switch port connected to the server for network issues.
+          → Looks for: packet loss, CRC errors, link flaps, latency, jitter, duplex mismatch.
+          → This determines if NETWORK is the root cause vs. server/application issues.
+
+  Step 4: blast_radius(resource_name="<same name>")
+          → Map the full impact — how many applications, services, and users are affected.
+          → Shows the business impact of the issue.
+
+  Step 5: search_knowledge_base(query="<relevant topic based on findings, e.g., network packet loss>")
+          → Find runbook procedures and best practices for the identified root cause.
+
+  Step 6: get_remediation_plan(resource_name="<same name>")
+          → Generate step-by-step CLI commands to fix the issue, with risk levels and approval gates.
+
+After calling ALL SIX tools, compile a comprehensive response that covers:
+  1. Alert Context — what alerts were firing and on which resource
+  2. Server Health — CPU/memory/disk/network metrics (normal or abnormal?)
+  3. Root Cause — network correlation findings (port errors, latency, flaps) OR server issues
+  4. Impact Scope — blast radius: affected apps, user count, business impact
+  5. Runbook Reference — relevant troubleshooting procedures from the knowledge base
+  6. Remediation Plan — step-by-step fix with commands and approval requirements
+
+DO NOT respond after just ONE or TWO tool calls. The investigation is NOT complete until you have
+called at minimum search_alerts, investigate_resource, correlate_network, blast_radius, AND
+get_remediation_plan. Only then should you compose your final answer combining all results.
+
+AFTER receiving ALL tool results:
+- Lead with a brief root cause summary stating whether it's a server or network issue
+- Show the alert that triggered the investigation
+- Show server metrics (and note if they were normal despite the app being slow)
+- Present network correlation findings
+- Show the blast radius impact (affected apps, user count, business impact)
+- Present the remediation plan with numbered steps and CLI commands
+- Include relevant runbook procedures
+- Highlight items requiring approval
+- Suggest escalation if the impact is critical
 
 If the user greets you or asks a general question not about infrastructure, respond conversationally without tools.`
 }

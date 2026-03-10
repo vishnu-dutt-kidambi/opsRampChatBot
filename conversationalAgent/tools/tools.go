@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"opsramp-agent/juniper"
 	"opsramp-agent/knowledge"
 	"opsramp-agent/opsramp"
 )
@@ -222,12 +223,76 @@ func GetToolDefinitions() []Tool {
 				},
 			},
 		},
+		{
+			Type: "function",
+			Function: ToolFunction{
+				Name:        "correlate_network",
+				Description: "Correlate a server or application issue with Juniper network switch telemetry. Given a server name, application name, or IP, this tool looks up the connected Juniper switch port and analyzes its telemetry (packet loss, CRC errors, link flaps, latency, jitter, duplex mismatch) to determine if the root cause is network-related. Accepts application names like 'payment-service' which are automatically resolved to the hosting server. Use this when investigating performance issues, latency problems, or connectivity issues. Returns switch port stats along with an analysis verdict.",
+				Parameters: ToolParameters{
+					Type: "object",
+					Properties: map[string]ToolProperty{
+						"resource_name": {
+							Type:        "string",
+							Description: "The name of the server, application, or IP address to correlate with network telemetry. Application names (e.g., 'payment-service') are automatically resolved to their hosting server.",
+						},
+					},
+					Required: []string{"resource_name"},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: ToolFunction{
+				Name:        "blast_radius",
+				Description: "Analyze the blast radius of an infrastructure issue. Given a server or application name, this tool traverses the dependency graph (server → applications → downstream services → user groups) to determine how many applications, services, and end-users are affected. Accepts application names like 'payment-service' which are automatically resolved to the hosting server. Use this after correlate_network confirms a network issue, or after investigate_resource reveals a problem, to understand the full scope and business impact of the incident.",
+				Parameters: ToolParameters{
+					Type: "object",
+					Properties: map[string]ToolProperty{
+						"resource_name": {
+							Type:        "string",
+							Description: "The name of the server, application, or IP address to analyze blast radius for. Application names (e.g., 'payment-service') are automatically resolved to their hosting server.",
+						},
+					},
+					Required: []string{"resource_name"},
+				},
+			},
+		},
+		{
+			Type: "function",
+			Function: ToolFunction{
+				Name:        "get_remediation_plan",
+				Description: "Generate a step-by-step guided remediation plan for a resource with network issues. Given a server or application name, this tool correlates with the Juniper switch, identifies the specific issues, and produces an ordered list of remediation steps with exact CLI commands, risk levels, and approval requirements. Accepts application names like 'payment-service' which are automatically resolved to the hosting server. Use this when the root cause is confirmed and you need to propose a fix.",
+				Parameters: ToolParameters{
+					Type: "object",
+					Properties: map[string]ToolProperty{
+						"resource_name": {
+							Type:        "string",
+							Description: "The name of the server, application, or IP address to generate remediation steps for. Application names (e.g., 'payment-service') are automatically resolved to their hosting server.",
+						},
+					},
+					Required: []string{"resource_name"},
+				},
+			},
+		},
 	}
+}
+
+// ExecuteOptions holds optional dependencies for tool execution.
+type ExecuteOptions struct {
+	KB      *knowledge.KnowledgeBase
+	Juniper *juniper.Client
 }
 
 // Execute runs a tool call against the OpsRamp client and returns the JSON result.
 // The optional kb parameter enables the search_knowledge_base tool.
 func Execute(client *opsramp.Client, call ToolCall, kb ...*knowledge.KnowledgeBase) (string, error) {
+	return ExecuteWithOptions(client, call, ExecuteOptions{
+		KB: firstKB(kb),
+	})
+}
+
+// ExecuteWithOptions runs a tool call with full options (including Juniper client).
+func ExecuteWithOptions(client *opsramp.Client, call ToolCall, opts ExecuteOptions) (string, error) {
 	switch call.Name {
 	case "search_alerts":
 		return executeSearchAlerts(client, call.Arguments)
@@ -244,13 +309,35 @@ func Execute(client *opsramp.Client, call ToolCall, kb ...*knowledge.KnowledgeBa
 	case "predict_capacity":
 		return executePredictCapacity(client, call.Arguments)
 	case "search_knowledge_base":
-		if len(kb) > 0 && kb[0] != nil {
-			return executeSearchKnowledgeBase(kb[0], call.Arguments)
+		if opts.KB != nil {
+			return executeSearchKnowledgeBase(opts.KB, call.Arguments)
 		}
 		return `{"error": "Knowledge base not loaded — no runbook documents available"}`, nil
+	case "correlate_network":
+		if opts.Juniper != nil {
+			return executeCorrelateNetwork(opts.Juniper, call.Arguments)
+		}
+		return `{"error": "Juniper network client not configured — network correlation unavailable"}`, nil
+	case "blast_radius":
+		if opts.Juniper != nil {
+			return executeBlastRadius(opts.Juniper, call.Arguments)
+		}
+		return `{"error": "Juniper network client not configured — blast radius analysis unavailable"}`, nil
+	case "get_remediation_plan":
+		if opts.Juniper != nil {
+			return executeGetRemediationPlan(opts.Juniper, call.Arguments)
+		}
+		return `{"error": "Juniper network client not configured — remediation planning unavailable"}`, nil
 	default:
 		return "", fmt.Errorf("unknown tool: %s", call.Name)
 	}
+}
+
+func firstKB(kbs []*knowledge.KnowledgeBase) *knowledge.KnowledgeBase {
+	if len(kbs) > 0 {
+		return kbs[0]
+	}
+	return nil
 }
 
 func executeSearchAlerts(client *opsramp.Client, args map[string]string) (string, error) {
@@ -546,6 +633,266 @@ func executeSearchKnowledgeBase(kb *knowledge.KnowledgeBase, args map[string]str
 		"source":  "OpsRamp Operations Runbook",
 	}
 	return toJSON(result)
+}
+
+func executeCorrelateNetwork(jClient *juniper.Client, args map[string]string) (string, error) {
+	name := args["resource_name"]
+	if name == "" {
+		return "", fmt.Errorf("resource_name is required")
+	}
+
+	correlation := jClient.CorrelateNetwork(name)
+	if correlation == nil {
+		// No mapping found — resource may be cloud-only (no physical switch)
+		return fmt.Sprintf(`{"error": "No network switch port mapping found for '%s'. This resource may be in a cloud environment without a managed Juniper switch, or the LLDP/DCIM mapping is not configured."}`, name), nil
+	}
+
+	// Build a structured summary for the LLM
+	type issueSummary struct {
+		Type        string `json:"type"`
+		Severity    string `json:"severity"`
+		Description string `json:"description"`
+		Value       string `json:"value"`
+		Threshold   string `json:"threshold"`
+	}
+
+	type correlationResult struct {
+		ResourceName   string         `json:"resource_name"`
+		ResourceIP     string         `json:"resource_ip"`
+		SwitchName     string         `json:"switch_name"`
+		SwitchModel    string         `json:"switch_model"`
+		SwitchIP       string         `json:"switch_ip"`
+		PortID         string         `json:"port_id"`
+		PortStatus     string         `json:"port_status"`
+		Speed          string         `json:"speed"`
+		Duplex         string         `json:"duplex"`
+		PacketLoss     string         `json:"packet_loss"`
+		RxErrors       int            `json:"rx_errors"`
+		TxErrors       int            `json:"tx_errors"`
+		Latency        string         `json:"latency_ms"`
+		Jitter         string         `json:"jitter_ms"`
+		RxBps          string         `json:"rx_rate"`
+		TxBps          string         `json:"tx_rate"`
+		LastFlapped    string         `json:"last_flapped"`
+		Issues         []issueSummary `json:"issues"`
+		IssueCount     int            `json:"issue_count"`
+		NetworkIsRoot  bool           `json:"network_is_likely_root_cause"`
+		Verdict        string         `json:"verdict"`
+		Recommendation string         `json:"recommendation,omitempty"`
+	}
+
+	duplex := "full-duplex"
+	if !correlation.FullDuplex {
+		duplex = "half-duplex"
+	}
+
+	issues := make([]issueSummary, len(correlation.Issues))
+	for i, iss := range correlation.Issues {
+		issues[i] = issueSummary{
+			Type:        iss.Type,
+			Severity:    iss.Severity,
+			Description: iss.Description,
+			Value:       iss.Value,
+			Threshold:   iss.Threshold,
+		}
+	}
+
+	result := correlationResult{
+		ResourceName:   correlation.ResourceName,
+		ResourceIP:     correlation.ResourceIP,
+		SwitchName:     correlation.SwitchName,
+		SwitchModel:    correlation.SwitchModel,
+		SwitchIP:       correlation.SwitchIP,
+		PortID:         correlation.PortID,
+		PortStatus:     correlation.PortStatus,
+		Speed:          fmt.Sprintf("%dMbps", correlation.Speed),
+		Duplex:         duplex,
+		PacketLoss:     fmt.Sprintf("%.1f%%", correlation.PacketLoss),
+		RxErrors:       correlation.RxErrors,
+		TxErrors:       correlation.TxErrors,
+		Latency:        fmt.Sprintf("%.1f", correlation.Latency),
+		Jitter:         fmt.Sprintf("%.1f", correlation.Jitter),
+		RxBps:          formatBps(correlation.RxBps),
+		TxBps:          formatBps(correlation.TxBps),
+		LastFlapped:    correlation.LastFlapped,
+		Issues:         issues,
+		IssueCount:     correlation.IssueCount,
+		NetworkIsRoot:  correlation.NetworkIsRoot,
+		Verdict:        correlation.Verdict,
+		Recommendation: correlation.Recommendation,
+	}
+
+	return toJSON(result)
+}
+
+func executeBlastRadius(jClient *juniper.Client, args map[string]string) (string, error) {
+	name := args["resource_name"]
+	if name == "" {
+		return "", fmt.Errorf("resource_name is required")
+	}
+
+	result := jClient.AnalyzeBlastRadius(name)
+	if result == nil {
+		return fmt.Sprintf(`{"error": "No dependency graph data found for '%s'. This resource may not be in the infrastructure topology map."}`, name), nil
+	}
+
+	// Build a structured summary for the LLM
+	type nodeSummary struct {
+		Name        string `json:"name"`
+		Type        string `json:"type"`
+		Layer       string `json:"layer"`
+		Criticality string `json:"criticality"`
+		Impact      string `json:"impact"`
+		Reason      string `json:"reason"`
+	}
+
+	type pathEntry struct {
+		Name         string `json:"name"`
+		Type         string `json:"type"`
+		Relationship string `json:"relationship,omitempty"`
+	}
+
+	type blastResult struct {
+		RootCause            string        `json:"root_cause"`
+		RootCauseDesc        string        `json:"root_cause_description"`
+		AffectedApplications int           `json:"affected_applications"`
+		AffectedServers      int           `json:"affected_servers"`
+		AffectedServices     int           `json:"affected_services"`
+		AffectedUsers        int           `json:"affected_users"`
+		TotalImpacted        int           `json:"total_impacted_nodes"`
+		Severity             string        `json:"overall_severity"`
+		BusinessImpact       string        `json:"business_impact"`
+		ImpactedNodes        []nodeSummary `json:"impacted_nodes"`
+		CriticalPath         []pathEntry   `json:"critical_path"`
+	}
+
+	nodes := make([]nodeSummary, len(result.ImpactedNodes))
+	for i, n := range result.ImpactedNodes {
+		nodes[i] = nodeSummary{
+			Name:        n.Name,
+			Type:        n.Type,
+			Layer:       n.Layer,
+			Criticality: n.Criticality,
+			Impact:      n.Impact,
+			Reason:      n.Reason,
+		}
+	}
+
+	path := make([]pathEntry, len(result.CriticalPath))
+	for i, p := range result.CriticalPath {
+		path[i] = pathEntry{
+			Name:         p.NodeName,
+			Type:         p.NodeType,
+			Relationship: p.Relationship,
+		}
+	}
+
+	out := blastResult{
+		RootCause:            result.RootCauseName,
+		RootCauseDesc:        result.RootCauseDesc,
+		AffectedApplications: result.AffectedApplications,
+		AffectedServers:      result.AffectedServers,
+		AffectedServices:     result.AffectedServices,
+		AffectedUsers:        result.AffectedUsers,
+		TotalImpacted:        result.TotalImpactedNodes,
+		Severity:             result.OverallSeverity,
+		BusinessImpact:       result.BusinessImpact,
+		ImpactedNodes:        nodes,
+		CriticalPath:         path,
+	}
+
+	return toJSON(out)
+}
+
+func executeGetRemediationPlan(jClient *juniper.Client, args map[string]string) (string, error) {
+	name := args["resource_name"]
+	if name == "" {
+		return "", fmt.Errorf("resource_name is required")
+	}
+
+	plan := jClient.GetRemediationPlan(name)
+	if plan == nil {
+		return fmt.Sprintf(`{"error": "Cannot generate remediation plan for '%s'. No network issues detected or resource not mapped to a Juniper switch."}`, name), nil
+	}
+
+	// Build a structured summary for the LLM
+	type stepSummary struct {
+		Step             int    `json:"step"`
+		Action           string `json:"action"`
+		Command          string `json:"command,omitempty"`
+		Target           string `json:"target"`
+		Category         string `json:"category"`
+		ExpectedOutcome  string `json:"expected_outcome"`
+		RiskLevel        string `json:"risk_level"`
+		RequiresApproval bool   `json:"requires_approval"`
+		EstimatedTime    string `json:"estimated_time"`
+	}
+
+	type planResult struct {
+		PlanID            string        `json:"plan_id"`
+		Title             string        `json:"title"`
+		Resource          string        `json:"resource"`
+		Switch            string        `json:"switch"`
+		Port              string        `json:"port"`
+		RootCause         string        `json:"root_cause"`
+		Urgency           string        `json:"urgency"`
+		RiskLevel         string        `json:"risk_level"`
+		EstimatedDowntime string        `json:"estimated_downtime"`
+		RequiresApproval  bool          `json:"requires_approval"`
+		ApprovalNote      string        `json:"approval_note,omitempty"`
+		TotalSteps        int           `json:"total_steps"`
+		Steps             []stepSummary `json:"steps"`
+		RollbackAvailable bool          `json:"rollback_available"`
+		RollbackPlan      string        `json:"rollback_plan"`
+	}
+
+	steps := make([]stepSummary, len(plan.Steps))
+	for i, s := range plan.Steps {
+		steps[i] = stepSummary{
+			Step:             s.StepNumber,
+			Action:           s.Action,
+			Command:          s.Command,
+			Target:           s.Target,
+			Category:         s.Category,
+			ExpectedOutcome:  s.ExpectedOutcome,
+			RiskLevel:        s.RiskLevel,
+			RequiresApproval: s.RequiresApproval,
+			EstimatedTime:    s.EstimatedTime,
+		}
+	}
+
+	out := planResult{
+		PlanID:            plan.PlanID,
+		Title:             plan.Title,
+		Resource:          plan.ResourceName,
+		Switch:            plan.SwitchName,
+		Port:              plan.PortID,
+		RootCause:         plan.RootCause,
+		Urgency:           plan.Urgency,
+		RiskLevel:         plan.RiskLevel,
+		EstimatedDowntime: plan.EstimatedDowntime,
+		RequiresApproval:  plan.RequiresApproval,
+		ApprovalNote:      plan.ApprovalNote,
+		TotalSteps:        plan.TotalSteps,
+		Steps:             steps,
+		RollbackAvailable: plan.RollbackAvailable,
+		RollbackPlan:      plan.RollbackPlan,
+	}
+
+	return toJSON(out)
+}
+
+func formatBps(bps int64) string {
+	switch {
+	case bps >= 1000000000:
+		return fmt.Sprintf("%.1f Gbps", float64(bps)/1000000000)
+	case bps >= 1000000:
+		return fmt.Sprintf("%.1f Mbps", float64(bps)/1000000)
+	case bps >= 1000:
+		return fmt.Sprintf("%.1f Kbps", float64(bps)/1000)
+	default:
+		return fmt.Sprintf("%d bps", bps)
+	}
 }
 
 // FormatToolsForPrompt generates a human-readable tool description block for the system prompt.

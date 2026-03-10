@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"opsramp-agent/agent"
+	"opsramp-agent/juniper"
 	"opsramp-agent/knowledge"
 	"opsramp-agent/mcpserver"
 	"opsramp-agent/mockdata"
@@ -58,6 +59,10 @@ func main() {
 	resources := mockdata.GetResources()
 	incidents := mockdata.GetIncidents()
 	metricHistory := mockdata.GetMetricHistory()
+	networkSwitches := mockdata.GetNetworkSwitches()
+	portMappings := mockdata.GetNetworkPortMappings()
+	depNodes := mockdata.GetDependencyNodes()
+	depEdges := mockdata.GetDependencyEdges()
 
 	logf("  Loaded mock environment:\n")
 	logf("    Resources: %d (AWS, Azure, GCP, On-Premise)\n", len(resources))
@@ -88,13 +93,26 @@ func main() {
 		metricResources[ms.ResourceID] = true
 	}
 	logf("    Metric History: %d series across %d resources (30-day)\n", len(metricHistory), len(metricResources))
+
+	// Count network stats
+	totalPorts := 0
+	for _, sw := range networkSwitches {
+		totalPorts += len(sw.Ports)
+	}
+	logf("    Network Switches: %d (Juniper Mist) with %d ports mapped\n", len(networkSwitches), len(portMappings))
+	logf("    Dependency Graph: %d nodes, %d edges (blast radius topology)\n", len(depNodes), len(depEdges))
 	logln()
 
 	// Create the OpsRamp client with mock data
 	client := opsramp.NewClient(alerts, resources, incidents, metricHistory)
 
+	// Create the Juniper Mist network client
+	juniperClient := juniper.NewClient(networkSwitches, portMappings)
+	juniperClient.SetDependencyGraph(depNodes, depEdges)
+
 	// Create the agent
 	opsAgent := agent.NewAgent(ollamaHost, llmModel, client)
+	opsAgent.SetJuniperClient(juniperClient)
 
 	// Load knowledge base (operations runbooks)
 	embeddingModel := getEnv("EMBEDDING_MODEL", "nomic-embed-text")
@@ -141,7 +159,7 @@ func main() {
 
 	if mcpMode {
 		// MCP server mode — stdio transport (for Claude Desktop, VS Code, etc.)
-		if err := mcpserver.StartStdio(client, kb); err != nil {
+		if err := mcpserver.StartStdio(client, kb, juniperClient); err != nil {
 			fmt.Fprintf(os.Stderr, "MCP server error: %v\n", err)
 			os.Exit(1)
 		}
@@ -151,7 +169,7 @@ func main() {
 	if mcpHTTPMode {
 		// MCP server mode — HTTP transport (for remote MCP clients)
 		fmt.Printf("  🔌 Starting MCP HTTP server on %s\n\n", mcpHTTPAddr)
-		if err := mcpserver.StartHTTP(mcpHTTPAddr, client, kb); err != nil {
+		if err := mcpserver.StartHTTP(mcpHTTPAddr, client, kb, juniperClient); err != nil {
 			fmt.Fprintf(os.Stderr, "MCP HTTP server error: %v\n", err)
 			os.Exit(1)
 		}
@@ -253,6 +271,13 @@ func printHelp() {
 	fmt.Println("  ║  • How do I troubleshoot disk space full?               ║")
 	fmt.Println("  ║  • What are the escalation contacts?                    ║")
 	fmt.Println("  ║  • How to fix a container CrashLoopBackOff?             ║")
+	fmt.Println("  ║                                                         ║")
+	fmt.Println("  ║  NETWORK / BLAST RADIUS / REMEDIATION:                  ║")
+	fmt.Println("  ║  • Correlate network for k8s-node-04                    ║")
+	fmt.Println("  ║  • What is the blast radius for k8s-node-04?            ║")
+	fmt.Println("  ║  • How many users are affected by the k8s-node-04 issue?║")
+	fmt.Println("  ║  • Give me a remediation plan for k8s-node-04           ║")
+	fmt.Println("  ║  • Why is the payment app slow?                         ║")
 	fmt.Println("  ║                                                         ║")
 	fmt.Println("  ╚═══════════════════════════════════════════════════════════╝")
 	fmt.Println()

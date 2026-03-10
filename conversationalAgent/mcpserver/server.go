@@ -1,6 +1,6 @@
 // Package mcpserver exposes the OpsRamp ChatBot tools as a Model Context Protocol
 // (MCP) server. This allows any MCP-compatible client (Claude Desktop, VS Code
-// Copilot, Cursor, custom agents, etc.) to discover and call our 8 operational
+// Copilot, Cursor, custom agents, etc.) to discover and call our 11 operational
 // tools over stdio or HTTP.
 //
 // The tools themselves are not reimplemented — this package wraps the existing
@@ -16,6 +16,7 @@ import (
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 
+	"opsramp-agent/juniper"
 	"opsramp-agent/knowledge"
 	"opsramp-agent/opsramp"
 	"opsramp-agent/tools"
@@ -23,22 +24,26 @@ import (
 
 // StartStdio starts the MCP server on stdin/stdout (stdio transport).
 // This is the standard transport for tools like Claude Desktop and VS Code.
-func StartStdio(client *opsramp.Client, kb *knowledge.KnowledgeBase) error {
-	s := newMCPServer(client, kb)
+func StartStdio(client *opsramp.Client, kb *knowledge.KnowledgeBase, jc ...*juniper.Client) error {
+	s := newMCPServer(client, kb, jc...)
 	log.Println("[MCP] Starting OpsRamp MCP Server on stdio...")
 	return server.ServeStdio(s)
 }
 
 // StartHTTP starts the MCP server on an HTTP endpoint using Streamable HTTP transport.
-func StartHTTP(addr string, client *opsramp.Client, kb *knowledge.KnowledgeBase) error {
-	s := newMCPServer(client, kb)
+func StartHTTP(addr string, client *opsramp.Client, kb *knowledge.KnowledgeBase, jc ...*juniper.Client) error {
+	s := newMCPServer(client, kb, jc...)
 	log.Printf("[MCP] Starting OpsRamp MCP Server on %s ...\n", addr)
 	httpServer := server.NewStreamableHTTPServer(s)
 	return httpServer.Start(addr)
 }
 
-// newMCPServer creates the MCP server with all 8 OpsRamp tools registered.
-func newMCPServer(client *opsramp.Client, kb *knowledge.KnowledgeBase) *server.MCPServer {
+// newMCPServer creates the MCP server with all OpsRamp tools registered.
+func newMCPServer(client *opsramp.Client, kb *knowledge.KnowledgeBase, jc ...*juniper.Client) *server.MCPServer {
+	var juniperClient *juniper.Client
+	if len(jc) > 0 {
+		juniperClient = jc[0]
+	}
 	s := server.NewMCPServer(
 		"opsRamp-mcp-server",
 		"1.0.0",
@@ -51,7 +56,7 @@ func newMCPServer(client *opsramp.Client, kb *knowledge.KnowledgeBase) *server.M
 	for _, def := range tools.GetToolDefinitions() {
 		td := def // capture loop variable
 		mcpTool := convertTool(td)
-		s.AddTool(mcpTool, makeHandler(client, kb, td.Function.Name))
+		s.AddTool(mcpTool, makeHandler(client, kb, juniperClient, td.Function.Name))
 	}
 
 	return s
@@ -89,8 +94,8 @@ func convertTool(def tools.Tool) mcp.Tool {
 	return mcp.NewTool(def.Function.Name, opts...)
 }
 
-// makeHandler returns an MCP tool handler that delegates to tools.Execute().
-func makeHandler(client *opsramp.Client, kb *knowledge.KnowledgeBase, toolName string) server.ToolHandlerFunc {
+// makeHandler returns an MCP tool handler that delegates to tools.ExecuteWithOptions().
+func makeHandler(client *opsramp.Client, kb *knowledge.KnowledgeBase, jc *juniper.Client, toolName string) server.ToolHandlerFunc {
 	return func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		// Extract string arguments from the MCP request
 		args := make(map[string]string)
@@ -109,7 +114,11 @@ func makeHandler(client *opsramp.Client, kb *knowledge.KnowledgeBase, toolName s
 		}
 
 		// Delegate to the existing tool execution logic
-		result, err := tools.Execute(client, call, kb)
+		opts := tools.ExecuteOptions{
+			KB:      kb,
+			Juniper: jc,
+		}
+		result, err := tools.ExecuteWithOptions(client, call, opts)
 		if err != nil {
 			return mcp.NewToolResultError(err.Error()), nil
 		}

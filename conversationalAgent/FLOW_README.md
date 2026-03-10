@@ -1,7 +1,8 @@
 # OpsRamp ChatBot — Flow Documentation
 
-> **Generated:** February 20, 2026
-> **Model:** llama3.1 via Ollama (localhost:11434)
+> **Generated:** March 10, 2026
+> **Model:** Configurable — default `llama3.1`; native Mac setup installs `mistral` (set `LLM_MODEL` env var to override)
+> **Ollama:** localhost:11434 (set `OLLAMA_HOST` to override)
 > **Purpose:** Documents every agent flow end-to-end — from user question, through Ollama tool-calling, to final answer. Includes real captured responses for regression testing.
 
 ---
@@ -21,8 +22,12 @@
 11. [Flow 9: Search Knowledge Base (RAG)](#11-flow-9-search-knowledge-base-rag)
 12. [Flow 10: Meta Questions (No Tool Call)](#12-flow-10-meta-questions-no-tool-call)
 13. [Flow 11: MCP Server Mode](#13-flow-11-mcp-server-mode)
-14. [Ollama API Request/Response Format](#14-ollama-api-requestresponse-format)
-15. [Testing Reference — All Captured Responses](#15-testing-reference--all-captured-responses)
+14. [Flow 12: Correlate Network (Juniper)](#14-flow-12-correlate-network-juniper)
+15. [Flow 13: Blast Radius Analysis](#15-flow-13-blast-radius-analysis)
+16. [Flow 14: Guided Remediation](#16-flow-14-guided-remediation)
+17. [Flow 15: End-to-End — "Why is the payment app slow?"](#17-flow-15-end-to-end--why-is-the-payment-app-slow)
+18. [Ollama API Request/Response Format](#18-ollama-api-requestresponse-format)
+19. [Testing Reference — All Captured Responses](#19-testing-reference--all-captured-responses)
 
 ---
 
@@ -59,7 +64,8 @@
               ▼            ▼            ▼
      ┌──────────────┐ ┌──────────┐ ┌──────────────┐
      │  Ollama LLM  │ │  Tool    │ │  OpsRamp     │
-     │  (llama3.1)  │ │  Router  │ │  Mock Client │
+     │  (configur-  │ │  Router  │ │  Mock Client │
+     │   able)      │ │          │ │              │
      │              │ │          │ │              │
      │ /api/chat    │ │ tools.go │ │ client.go    │
      │ with tools[] │ │ Execute()│ │ forecast.go  │
@@ -74,14 +80,68 @@
 | `server.go` | HTTP server (`--web` mode) — serves embedded HTML + `/api/chat` and `/api/clear` endpoints |
 | `mcpserver/server.go` | MCP server (`--mcp` / `--mcp-http` mode) — wraps tools as MCP protocol handlers using mcp-go SDK |
 | `agent/agent.go` | Orchestrator — manages conversation history, calls Ollama, dispatches tools (including KB), handles the tool-calling loop |
-| `tools/tools.go` | Tool definitions (JSON schemas for LLM) + `Execute()` dispatcher + per-tool execution handlers (8 tools) |
+| `tools/tools.go` | Tool definitions (JSON schemas for LLM) + `Execute()` dispatcher + per-tool execution handlers (11 tools) |
 | `opsramp/client.go` | Mock OpsRamp API client — search/filter/investigate methods operating on in-memory data |
 | `opsramp/models.go` | Data structures mirroring OpsRamp API v2 (Alert, Resource, Incident, MetricSeries, etc.) |
 | `opsramp/forecast.go` | Capacity forecasting engine — linear regression, R² confidence, threshold prediction |
+| `juniper/models.go` | Juniper network models, blast radius types, remediation plan types |
+| `juniper/client.go` | Juniper Mist client — network correlation, blast radius analysis, remediation plan generation |
 | `knowledge/knowledge.go` | RAG pipeline — PDF extraction, text chunking, Ollama embeddings, vector store, cosine similarity search |
-| `mockdata/*.go` | Mock data generators — alerts, resources, incidents, 30-day metric history |
+| `mockdata/*.go` | Mock data generators — alerts, resources, incidents, 30-day metric history, network switches, dependency graph |
 | `runbooks/*.pdf` | Operations runbook PDFs loaded into the knowledge base at startup |
-| `web/index.html` | Browser chat UI (embedded in binary via `go:embed`) |
+| `web/index.html` | Browser chat UI (embedded in binary via `go:embed`) — 11 quick-action buttons |
+
+### Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `OLLAMA_HOST` | `http://localhost:11434` | Ollama API endpoint |
+| `LLM_MODEL` | `llama3.1` | LLM model for chat (native `make setup` installs `mistral`) |
+| `EMBEDDING_MODEL` | `nomic-embed-text` | Embedding model for RAG knowledge base |
+| `RUNBOOK_DIR` | `runbooks` | Directory containing PDF runbook files |
+
+### Build & Run
+
+The project provides **two** Makefiles — a root-level one for convenience and a `conversationalAgent/` one with the full target set. All root targets delegate via `$(MAKE) -C conversationalAgent`.
+
+**From the repository root** (`make help`):
+
+| Category | Command | Description |
+|----------|---------|-------------|
+| **Native** | `make setup` | Install Ollama + pull models (~5 GB) |
+| | `make run` | Terminal REPL |
+| | `make web` | Browser chat UI on `http://localhost:8080` |
+| | `make mcp` | MCP server (stdio — Claude Desktop, VS Code) |
+| | `make mcp-http` | MCP server (HTTP on `http://localhost:8081`) |
+| | `make build` | Build the Go binary |
+| | `make clean` | Remove build artifacts |
+| | `make test` | Run tests |
+| | `make fmt` / `make vet` / `make lint` | Code quality |
+| **Docker** | `make docker-web-mac` | Recommended for Mac (native Ollama + Apple GPU) |
+| | `make docker-web` | Full Docker mode (CPU-only, ~60 s/response) |
+| | `make docker-setup` | Start Ollama container + pull models |
+| | `make docker-mcp` | MCP HTTP server in Docker |
+| | `make docker-cli` | Interactive CLI in Docker |
+| | `make docker-down` | Stop all containers |
+| | `make docker-clean` | Stop + remove images/volumes |
+
+### Web UI Quick Actions
+
+The browser chat UI (`--web` mode) shows a welcome screen with 11 quick-click buttons for common queries:
+
+| Button | Query sent |
+|--------|-----------|
+| 🔴 Critical alerts | "Show me all critical alerts" |
+| 📊 Environment summary | "Give me an environment summary" |
+| 🔍 Investigate server | "Investigate web-server-prod-01" |
+| 🎫 Open incidents | "Show me all open incidents" |
+| 📈 Capacity forecast | "Predict capacity for db-primary-01" |
+| ⚠️ At-risk resources | "Which servers are at risk of running out of capacity?" |
+| 📖 High CPU runbook | "What is the runbook for high CPU usage?" |
+| 🔌 Network correlation | "Correlate network for k8s-node-04" |
+| 💥 Blast radius | "What is the blast radius for k8s-node-04?" |
+| 🛠️ Remediation plan | "Give me a remediation plan for k8s-node-04" |
+| 🚀 End-to-end investigation | "Why is the payment app slow?" |
 
 ---
 
@@ -98,12 +158,12 @@ Every user question follows this exact path:
 ```go
 // agent.go — callLLM()
 reqBody := chatRequest{
-    Model:    "llama3.1",
+    Model:    a.model,       // configurable via LLM_MODEL env (default: "llama3.1")
     Messages: a.history,     // system prompt + conversation so far
-    Tools:    tools.GetToolDefinitions(),  // 8 tool schemas
+    Tools:    tools.GetToolDefinitions(),  // 11 tool schemas
     Stream:   false,
 }
-// POST to http://localhost:11434/api/chat
+// POST to ${OLLAMA_HOST}/api/chat (default: http://localhost:11434/api/chat)
 ```
 
 The **system prompt** (first message, role=system) tells the LLM:
@@ -112,7 +172,7 @@ The **system prompt** (first message, role=system) tells the LLM:
 - Rules for tool usage (never fabricate data, always use tools for real queries)
 - How to format answers after receiving tool results
 
-The **tools array** contains JSON Schema definitions for all 8 tools. Ollama sends these to the LLM so it knows what functions are available and what parameters they accept.
+The **tools array** contains JSON Schema definitions for all 11 tools. Ollama sends these to the LLM so it knows what functions are available and what parameters they accept.
 
 ### Step 3: Ollama responds with either a tool call OR a text answer
 
@@ -191,7 +251,7 @@ User: "Show me all critical alerts"
 agent.Ask() → callLLM()
   │
   ▼
-Ollama receives: system prompt + user message + 8 tool schemas
+Ollama receives: system prompt + user message + 11 tool schemas
 Ollama decides: call search_alerts with {"state": "Critical"}
   │
   ▼
@@ -1034,7 +1094,7 @@ User: "What is the runbook for high CPU usage?"
 agent.Ask() → callLLM()
   │
   ▼
-Ollama receives: system prompt + user message + 8 tool schemas
+Ollama receives: system prompt + user message + 11 tool schemas
 Ollama decides: call search_knowledge_base with {"query": "high CPU usage runbook"}
   │
   ▼
@@ -1162,7 +1222,7 @@ When started with `--mcp` or `--mcp-http`, the agent runs as a **Model Context P
 
 ### How Tools Are Registered
 
-At startup, `mcpserver.newMCPServer()` reads all 8 tool definitions from `tools.GetToolDefinitions()` and converts each Ollama-format schema to an MCP tool:
+At startup, `mcpserver.newMCPServer()` reads all 11 tool definitions from `tools.GetToolDefinitions()` and converts each Ollama-format schema to an MCP tool:
 
 ```go
 for _, def := range tools.GetToolDefinitions() {
@@ -1240,13 +1300,419 @@ In MCP mode, the agent is a **pure tool server** — it exposes capabilities, th
 
 ---
 
-## 14. Ollama API Request/Response Format
+## 14. Flow 12: Correlate Network (Juniper)
+
+### User Query Examples
+- "Correlate network for k8s-node-04"
+- "Is the network causing latency on web-server-prod-01?"
+- "Check the switch port for k8s-node-04"
+
+### Flow Diagram
+
+```
+User: "Correlate network for k8s-node-04"
+  │
+  ▼
+agent.Ask() → callLLM()
+  │
+  ▼
+Ollama receives: system prompt + user message + 11 tool schemas
+Ollama decides: call correlate_network with {"resource_name": "k8s-node-04"}
+  │
+  ▼
+agent.executeTool() → tools.ExecuteWithOptions()
+  │
+  ▼
+executeCorrelateNetwork(juniperClient, {"resource_name": "k8s-node-04"})
+  → juniperClient.CorrelateNetwork("k8s-node-04")
+    → findMapping("k8s-node-04") → {SwitchID: "sw-gcp-central-01", PortID: "ge-0/0/5"}
+    → getSwitchByID("sw-gcp-central-01") → sw-gcp-central-01 (Juniper EX4300-48T)
+    → getSwitchPort(sw, "ge-0/0/5") → port with 8.3% packet loss, 156789 rx_errors
+    → analyzePortIssues(port, mapping) → 5 issues detected:
+        • packet_loss: 8.3% (critical, threshold: 1.0%)
+        • rx_errors: 156789 (critical)
+        • link_flap: last flapped 12 minutes ago (warning)
+        • speed_downgrade: 100Mbps (critical, expected: 1000Mbps)
+        • duplex_mismatch: half-duplex (critical)
+    → verdict: "NETWORK IS THE LIKELY ROOT CAUSE"
+  → returns JSON with full port telemetry + issues + verdict
+  │
+  ▼
+Tool result appended to history as role="tool"
+callLLM() called again
+  │
+  ▼
+Ollama reads JSON, generates human summary:
+  "Network correlation reveals significant issues on sw-gcp-central-01 port ge-0/0/5:
+   - 8.3% packet loss (critical)
+   - 156,789 RX errors
+   - Link flapping (last flap 12 minutes ago)
+   - Speed downgraded to 100Mbps (should be 1Gbps)
+   - Half-duplex mismatch
+   Network is the likely root cause of the performance issues."
+```
+
+### Key Data Flow
+```
+Resource name → findMapping() → {switch_id, port_id}
+                    ↓
+              getSwitchByID() → SwitchStats (from mockdata/network.go)
+                    ↓
+              getSwitchPort() → SwitchPort (port-level telemetry)
+                    ↓
+              analyzePortIssues() → []NetworkIssue
+                    ↓
+              buildRecommendation() → verdict + recommendation string
+                    ↓
+              NetworkCorrelation result → JSON for LLM
+```
+
+---
+
+## 15. Flow 13: Blast Radius Analysis
+
+### User Query Examples
+- "What's the blast radius for k8s-node-04?"
+- "How many users are affected by the k8s-node-04 issue?"
+- "Show me the impact of the network problem on k8s-node-04"
+
+### Flow Diagram
+
+```
+User: "What's the blast radius for k8s-node-04?"
+  │
+  ▼
+agent.Ask() → callLLM()
+  │
+  ▼
+Ollama receives: system prompt + user message + 11 tool schemas
+Ollama decides: call blast_radius with {"resource_name": "k8s-node-04"}
+  │
+  ▼
+agent.executeTool() → tools.ExecuteWithOptions()
+  │
+  ▼
+executeBlastRadius(juniperClient, {"resource_name": "k8s-node-04"})
+  → juniperClient.AnalyzeBlastRadius("k8s-node-04")
+    → Find start node: k8s-node-04 (server, compute layer)
+    → Find switch mapping: sw-gcp-central-01 ge-0/0/5
+    → BFS traversal of dependency graph:
+        k8s-node-04 ──hosts──→ payment-service (critical)
+        k8s-node-04 ──hosts──→ order-service (high)
+        k8s-node-04 ──hosts──→ checkout-ui (high)
+        checkout-ui  ──depends_on── payment-service (already visited)
+        checkout-ui  ──depends_on── order-service (already visited)
+        payment-service ──serves──→ online-shoppers (3000 users)
+        payment-service ──serves──→ mobile-app-users (2000 users)
+        order-service ──serves──→ online-shoppers (already visited)
+        checkout-ui ──serves──→ online-shoppers (already visited)
+    → Result:
+        Affected applications: 3 (payment-service, order-service, checkout-ui)
+        Affected users: 5000 (online-shoppers: 3000 + mobile-app-users: 2000)
+        Severity: critical
+        Business impact: "3 application(s) and approximately 5000 users affected.
+          This is a HIGH-IMPACT incident affecting customer-facing services.
+          Revenue-generating services are impacted — immediate escalation recommended."
+        Critical path: k8s-node-04 → payment-service → online-shoppers
+  │
+  ▼
+Tool result appended to history as role="tool"
+callLLM() called again
+  │
+  ▼
+Ollama reads JSON, generates human summary:
+  "Blast radius analysis for k8s-node-04 reveals a HIGH-IMPACT incident:
+   - Root cause: Network issues on sw-gcp-central-01 port ge-0/0/5
+   - 3 applications affected: payment-service, order-service, checkout-ui
+   - ~5,000 end users impacted (3,000 online shoppers + 2,000 mobile users)
+   - Revenue-generating services are at risk
+   - Critical path: k8s-node-04 → payment-service → online-shoppers
+   Immediate escalation recommended."
+```
+
+### Dependency Graph Traversal
+```
+             sw-gcp-central-01 (ge-0/0/5)
+                     │ connects_to
+                     ▼
+              ┌─ k8s-node-04 ─┐
+              │    (server)    │
+         hosts│               │hosts
+              ▼               ▼
+   ┌─────────────┐   ┌──────────────┐   ┌──────────┐
+   │ payment-    │   │ order-       │   │ checkout- │
+   │ service     │   │ service      │   │ ui        │
+   │ (critical)  │   │ (high)       │   │ (high)    │
+   └──────┬──────┘   └──────┬───────┘   └──────┬────┘
+          │ serves           │ serves           │ serves
+          ▼                  ▼                  ▼
+   ┌──────────────┐  ┌──────────────┐
+   │ online-      │  │ mobile-app-  │
+   │ shoppers     │  │ users        │
+   │ (3000 users) │  │ (2000 users) │
+   └──────────────┘  └──────────────┘
+         Total affected: ~5,000 users
+```
+
+---
+
+## 16. Flow 14: Guided Remediation
+
+### User Query Examples
+- "Give me a remediation plan for k8s-node-04"
+- "How do I fix the network issue on k8s-node-04?"
+- "What steps should I take to resolve the packet loss?"
+
+### Flow Diagram
+
+```
+User: "Give me a remediation plan for k8s-node-04"
+  │
+  ▼
+agent.Ask() → callLLM()
+  │
+  ▼
+Ollama receives: system prompt + user message + 11 tool schemas
+Ollama decides: call get_remediation_plan with {"resource_name": "k8s-node-04"}
+  │
+  ▼
+agent.executeTool() → tools.ExecuteWithOptions()
+  │
+  ▼
+executeGetRemediationPlan(juniperClient, {"resource_name": "k8s-node-04"})
+  → juniperClient.GetRemediationPlan("k8s-node-04")
+    → CorrelateNetwork("k8s-node-04") → 5 issues (packet_loss, rx_errors, link_flap, speed_downgrade, duplex_mismatch)
+    → findMapping("k8s-node-04") → {SwitchID: "sw-gcp-central-01", PortID: "ge-0/0/5"}
+    → Generate remediation steps:
+        Step 1: [diagnostic] show interfaces ge-0/0/5 extensive
+        Step 2: [diagnostic] show interfaces diagnostics optics ge-0/0/5
+        Step 3: [mitigation] Bounce interface (disable/enable) ⚠️ REQUIRES APPROVAL
+        Step 4: [diagnostic] Clear error counters
+        Step 5: [resolution] Reseat physical cable ⚠️ REQUIRES APPROVAL
+        Step 6: [resolution] Force 1Gbps full-duplex ⚠️ REQUIRES APPROVAL
+        Step 7: [verification] Check port status
+        Step 8: [verification] Check application health
+    → PlanID: REM-sw-gcp-central-01-ge-0/0/5
+    → Urgency: immediate
+    → Risk: medium
+    → Rollback available: yes
+  │
+  ▼
+Tool result appended to history as role="tool"
+callLLM() called again
+  │
+  ▼
+Ollama presents step-by-step plan to user with approval gates highlighted
+```
+
+### Remediation Step Categories
+
+| Category | Risk | Description |
+|----------|------|-------------|
+| `diagnostic` | none | Read-only commands to gather information |
+| `mitigation` | medium | Quick fixes with potential brief outage (interface bounce) |
+| `resolution` | low-medium | Permanent fixes (speed/duplex config, cable reseat) |
+| `verification` | none | Post-remediation checks to confirm fix |
+
+### Example Remediation Output (k8s-node-04)
+
+```
+Plan: REM-sw-gcp-central-01-ge-0/0/5
+Title: Remediate network issues on sw-gcp-central-01 port ge-0/0/5 (connected to k8s-node-04)
+Urgency: IMMEDIATE | Risk: MEDIUM | Approval Required: YES
+
+Step 1 [diagnostic] — 10s
+  Action: Run diagnostics on the affected switch port
+  Command: show interfaces ge-0/0/5 extensive
+  Target: sw-gcp-central-01
+
+Step 2 [diagnostic] — 10s
+  Action: Check interface error counters and optics
+  Command: show interfaces diagnostics optics ge-0/0/5
+  Target: sw-gcp-central-01
+
+Step 3 [mitigation] — 30s ⚠️ APPROVAL REQUIRED
+  Action: Bounce the interface to clear link flap state
+  Command: set interfaces ge-0/0/5 disable → commit → delete → commit
+  Target: sw-gcp-central-01
+  Risk: MEDIUM
+
+Step 4 [diagnostic] — 5s
+  Action: Clear interface error counters
+  Command: clear interfaces statistics ge-0/0/5
+  Target: sw-gcp-central-01
+
+Step 5 [resolution] — 2min ⚠️ APPROVAL REQUIRED
+  Action: Check physical cable connectivity
+  Target: sw-gcp-central-01 ↔ k8s-node-04
+
+Step 6 [resolution] — 30s ⚠️ APPROVAL REQUIRED
+  Action: Force port speed and duplex to 1000Mbps full-duplex
+  Command: set interfaces ge-0/0/5 speed 1g + link-mode full-duplex → commit
+  Target: sw-gcp-central-01
+
+Step 7 [verification] — 10s
+  Action: Verify remediation
+  Command: show interfaces ge-0/0/5 extensive | match "errors|loss|flap|speed|duplex"
+  Target: sw-gcp-central-01
+
+Step 8 [verification] — 10s
+  Action: Verify application health on k8s-node-04
+  Command: curl -s https://10.128.0.14:8443/health
+  Target: k8s-node-04
+
+Rollback: If remediation fails, restore port ge-0/0/5 config from backup.
+```
+
+---
+
+## 17. Flow 15: End-to-End — "Why is the payment app slow?"
+
+### The Showcase Scenario
+
+This is the flagship demo flow showing autonomous multi-tool reasoning. The agent chains **6 tool calls** across different domains to go from a vague user question to an actionable remediation plan.
+
+### User Query
+"Why is the payment app slow?"
+
+### Flow Diagram (6 Rounds of Autonomous Reasoning)
+
+```
+User: "Why is the payment app slow?"
+  │
+  ▼
+═══════════════════════════════════════════════════════════════
+ROUND 1: Search for alerts related to the payment app
+═══════════════════════════════════════════════════════════════
+  │
+  ▼
+LLM decides: call search_alerts(query="payment")
+  → Finds: ALR-20260219-009 — "HTTP response latency exceeding thresholds"
+     - Resource: k8s-node-04, P1 priority, Critical state
+     - Metric: http_response_time_ms Avg:2847ms P99:4200ms
+  │
+  ▼
+═══════════════════════════════════════════════════════════════
+ROUND 2: Investigate the underlying server
+═══════════════════════════════════════════════════════════════
+  │
+  ▼
+LLM decides: call investigate_resource(resource_name="k8s-node-04")
+  → Server metrics look NORMAL:
+     - CPU: 72.5% (elevated but not critical)
+     - Memory: 81.2%
+     - Disk: 55.8%
+     - Network: 0.8 Mbps in / 1.2 Mbps out
+  → 1 active alert (the HTTP latency one)
+  → LLM thinks: "Metrics are normal but app is slow... could be network?"
+  │
+  ▼
+═══════════════════════════════════════════════════════════════
+ROUND 3: Correlate with network telemetry (Juniper switch)
+═══════════════════════════════════════════════════════════════
+  │
+  ▼
+LLM decides: call correlate_network(resource_name="k8s-node-04")
+  → Switch: sw-gcp-central-01, Port: ge-0/0/5
+  → NETWORK IS THE LIKELY ROOT CAUSE:
+     - 8.3% packet loss (critical)
+     - 156,789 RX errors
+     - Link flapping (12 minutes ago)
+     - Speed: 100Mbps (should be 1Gbps)
+     - Half-duplex mismatch
+  │
+  ▼
+═══════════════════════════════════════════════════════════════
+ROUND 4: Map the blast radius — who's affected?
+═══════════════════════════════════════════════════════════════
+  │
+  ▼
+LLM decides: call blast_radius(resource_name="k8s-node-04")
+  → 3 applications affected:
+     - payment-service (critical)
+     - order-service (high)
+     - checkout-ui (high)
+  → ~5,000 users affected:
+     - online-shoppers: 3,000
+     - mobile-app-users: 2,000
+  → Business impact: HIGH — revenue-generating services impacted
+  │
+  ▼
+═══════════════════════════════════════════════════════════════
+ROUND 5: Search knowledge base for remediation procedures
+═══════════════════════════════════════════════════════════════
+  │
+  ▼
+LLM decides: call search_knowledge_base(query="network packet loss switch port remediation")
+  → Finds runbook sections on:
+     - Network troubleshooting procedures
+     - Switch port diagnostics
+     - Escalation procedures
+  │
+  ▼
+═══════════════════════════════════════════════════════════════
+ROUND 6: Generate guided remediation plan
+═══════════════════════════════════════════════════════════════
+  │
+  ▼
+LLM decides: call get_remediation_plan(resource_name="k8s-node-04")
+  → 8-step remediation plan generated:
+     - Diagnostics → Interface bounce → Cable check → Force speed/duplex → Verify
+     - Urgency: IMMEDIATE
+     - 3 steps require operator approval
+     - Rollback plan included
+  │
+  ▼
+═══════════════════════════════════════════════════════════════
+FINAL ANSWER: Agent synthesizes everything into a comprehensive response
+═══════════════════════════════════════════════════════════════
+
+Agent response (synthesized from 6 tool calls):
+
+"The payment app slowness is caused by a NETWORK issue, not a server problem.
+
+**Root Cause:**
+The Juniper switch sw-gcp-central-01, port ge-0/0/5 connected to k8s-node-04 has:
+- 8.3% packet loss
+- 156,789 RX errors
+- Speed downgraded to 100Mbps (should be 1Gbps)
+- Half-duplex mismatch + link flapping
+
+**Blast Radius:**
+- 3 applications affected: payment-service, order-service, checkout-ui
+- ~5,000 end users impacted (3,000 online shoppers + 2,000 mobile users)
+- Revenue-generating services at risk — immediate action needed
+
+**Recommended Fix (Plan: REM-sw-gcp-central-01-ge-0/0/5):**
+1. Run diagnostics: show interfaces ge-0/0/5 extensive
+2. Bounce the interface (⚠️ requires approval — 30sec outage)
+3. Reseat cable between sw-gcp-central-01 and k8s-node-04
+4. Force 1Gbps full-duplex configuration
+5. Verify port status and application health
+
+Shall I proceed with step 1 (diagnostics)?"
+```
+
+### Why This Flow Matters
+
+| Aspect | Value |
+|--------|-------|
+| **Rounds** | 6 autonomous tool calls with zero manual intervention |
+| **Cross-domain** | Spans alerts → compute → network → dependencies → knowledge → remediation |
+| **Root cause** | Correctly identifies network as root cause despite normal server metrics |
+| **Business context** | Quantifies impact: 3 apps, 5000 users, revenue at risk |
+| **Actionable** | Produces specific CLI commands with approval gates |
+| **Rollback** | Includes fallback plan if remediation fails |
+
+---
+
+## 18. Ollama API Request/Response Format
 
 ### Request (POST /api/chat)
 
 ```json
 {
-  "model": "llama3.1",
+  "model": "llama3.1",              // or "mistral" — set via LLM_MODEL env var
   "messages": [
     {"role": "system", "content": "You are an OpsRamp Operations Assistant..."},
     {"role": "user", "content": "Show me all critical alerts"}
@@ -1268,7 +1734,7 @@ In MCP mode, the agent is a **pure tool server** — it exposes capabilities, th
         }
       }
     }
-    // ... 6 more tool definitions
+    // ... 10 more tool definitions (11 total)
   ],
   "stream": false
 }
@@ -1330,10 +1796,13 @@ After tool execution, the history sent to Ollama looks like:
 
 ---
 
-## 15. Testing Reference — All Captured Responses
+## 19. Testing Reference — All Captured Responses
 
 All responses below were captured on **February 20, 2026** using **llama3.1** via Ollama.
 These can be used as baseline expectations for regression testing.
+
+> **Note:** The default model is now configurable via `LLM_MODEL` (default: `llama3.1`).
+> The native `make setup` pulls `mistral`. Captured responses may differ with different models.
 
 ### API Endpoint
 ```
@@ -1449,6 +1918,50 @@ curl -s http://localhost:8080/api/chat \
 
 ---
 
+### Test Case 12: Network Correlation
+```bash
+curl -s http://localhost:8080/api/chat \
+  -H 'Content-Type: application/json' \
+  -d '{"message":"Correlate network for k8s-node-04"}'
+```
+**Tool called:** `correlate_network(resource_name="k8s-node-04")`
+**Expected:** sw-gcp-central-01, ge-0/0/5, 8.3% packet loss, 156789 RX errors, "NETWORK IS THE LIKELY ROOT CAUSE"
+
+---
+
+### Test Case 13: Blast Radius
+```bash
+curl -s http://localhost:8080/api/chat \
+  -H 'Content-Type: application/json' \
+  -d '{"message":"What is the blast radius for k8s-node-04?"}'
+```
+**Tool called:** `blast_radius(resource_name="k8s-node-04")`
+**Expected:** 3 affected applications (payment-service, order-service, checkout-ui), ~5000 users, critical severity
+
+---
+
+### Test Case 14: Guided Remediation
+```bash
+curl -s http://localhost:8080/api/chat \
+  -H 'Content-Type: application/json' \
+  -d '{"message":"Give me a remediation plan for k8s-node-04"}'
+```
+**Tool called:** `get_remediation_plan(resource_name="k8s-node-04")`
+**Expected:** Multiple steps including interface bounce, cable reseat, force 1Gbps full-duplex, verification
+
+---
+
+### Test Case 15: End-to-End Multi-Tool
+```bash
+curl -s http://localhost:8080/api/chat \
+  -H 'Content-Type: application/json' \
+  -d '{"message":"Why is the payment app slow?"}'
+```
+**Tool called:** Multiple — search_alerts → investigate_resource → correlate_network → blast_radius → search_knowledge_base → get_remediation_plan (up to 6 rounds)
+**Expected:** Identifies network root cause on sw-gcp-central-01, 3 apps + 5000 users affected, remediation plan with Junos commands
+
+---
+
 ### Automated Test Script
 
 ```bash
@@ -1497,6 +2010,9 @@ test_query "Environment Summary" "Give me an environment summary" "22"
 test_query "Capacity Forecast" "Predict capacity for web-server-prod-01" "Already"
 test_query "At-Risk Resources" "Which resources are at risk?" "web-server-prod-01"
 test_query "Resource Details" "Show me details of db-primary-01" "10.0.2.10"
+test_query "Network Correlation" "Correlate network for k8s-node-04" "packet_loss"
+test_query "Blast Radius" "What is the blast radius for k8s-node-04?" "payment-service"
+test_query "Remediation Plan" "Give me a remediation plan for k8s-node-04" "ge-0/0/5"
 
 echo ""
 echo "Results: $PASS passed, $FAIL failed out of $((PASS+FAIL)) tests"

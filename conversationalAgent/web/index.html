@@ -473,8 +473,8 @@
         <div class="welcome-card">
             <h2>👋 Welcome to OpsRamp ChatBot</h2>
             <p>I can help you investigate alerts, search resources, manage incidents, forecast capacity, search
-                operations runbooks, and get
-                infrastructure summaries. Try one of these to get started:</p>
+                operations runbooks, correlate network issues, analyze blast radius, and generate remediation plans. Try
+                one of these to get started:</p>
             <div class="quick-actions">
                 <button class="quick-action" onclick="sendQuick('Show me all critical alerts')">
                     <span class="qa-icon">🔴</span> Critical alerts
@@ -498,8 +498,17 @@
                 <button class="quick-action" onclick="sendQuick('What is the runbook for high CPU usage?')">
                     <span class="qa-icon">📖</span> High CPU runbook
                 </button>
-                <button class="quick-action" onclick="sendQuick('How do I troubleshoot a disk space full alert?')">
-                    <span class="qa-icon">📚</span> Disk full procedure
+                <button class="quick-action" onclick="sendQuick('Correlate network for k8s-node-04')">
+                    <span class="qa-icon">🔌</span> Network correlation
+                </button>
+                <button class="quick-action" onclick="sendQuick('What is the blast radius for k8s-node-04?')">
+                    <span class="qa-icon">💥</span> Blast radius
+                </button>
+                <button class="quick-action" onclick="sendQuick('Give me a remediation plan for k8s-node-04')">
+                    <span class="qa-icon">🛠️</span> Remediation plan
+                </button>
+                <button class="quick-action" onclick="sendQuick('Why is the payment app slow?')">
+                    <span class="qa-icon">🚀</span> End-to-end investigation
                 </button>
             </div>
         </div>
@@ -523,6 +532,7 @@
         const chatContainer = document.getElementById('chatContainer');
         const inputField = document.getElementById('inputField');
         const sendBtn = document.getElementById('sendBtn');
+        const initialWelcomeHtml = chatContainer.innerHTML;
         let isWaiting = false;
 
         function handleKey(e) {
@@ -683,39 +693,7 @@
                 await fetch('/api/clear', { method: 'POST' });
             } catch (e) { /* ignore */ }
 
-            chatContainer.innerHTML = '';
-            // Re-add welcome card
-            chatContainer.innerHTML = `
-        <div class="welcome-card">
-          <h2>👋 Welcome to OpsRamp ChatBot</h2>
-          <p>I can help you investigate alerts, search resources, manage incidents, forecast capacity, search operations runbooks, and get infrastructure summaries. Try one of these to get started:</p>
-          <div class="quick-actions">
-            <button class="quick-action" onclick="sendQuick('Show me all critical alerts')">
-              <span class="qa-icon">🔴</span> Critical alerts
-            </button>
-            <button class="quick-action" onclick="sendQuick('Give me an environment summary')">
-              <span class="qa-icon">📊</span> Environment summary
-            </button>
-            <button class="quick-action" onclick="sendQuick('Investigate web-server-prod-01')">
-              <span class="qa-icon">🔍</span> Investigate server
-            </button>
-            <button class="quick-action" onclick="sendQuick('Show me all open incidents')">
-              <span class="qa-icon">🎫</span> Open incidents
-            </button>
-            <button class="quick-action" onclick="sendQuick('Predict capacity for db-primary-01')">
-              <span class="qa-icon">📈</span> Capacity forecast
-            </button>
-            <button class="quick-action" onclick="sendQuick('Which servers are at risk of running out of capacity?')">
-              <span class="qa-icon">⚠️</span> At-risk resources
-            </button>
-            <button class="quick-action" onclick="sendQuick('What is the runbook for high CPU usage?')">
-              <span class="qa-icon">📖</span> High CPU runbook
-            </button>
-            <button class="quick-action" onclick="sendQuick('How do I troubleshoot a disk space full alert?')">
-              <span class="qa-icon">📚</span> Disk full procedure
-            </button>
-          </div>
-        </div>`;
+            chatContainer.innerHTML = initialWelcomeHtml;
         }
 
         function escapeHtml(str) {
