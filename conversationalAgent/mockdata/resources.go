@@ -103,14 +103,19 @@ func GetResources() []opsramp.Resource {
 			Metrics: getGatewayMetrics(),
 		},
 
-		// ── GCP US-CENTRAL1 (Kubernetes Cluster) ─────────────────────────
+		// ── HPE GreenLake Datacenter (Kubernetes Cluster on HPE ProLiant) ─
+		// These are HPE-managed cloud servers running in an HPE datacenter,
+		// physically connected to Juniper switches with OpsRamp collectors.
+		// This is what enables Juniper network correlation — ANY infrastructure
+		// behind Juniper switches with OpsRamp agents supports this, whether
+		// it's HPE GreenLake, customer on-prem, or colocation.
 		{
 			ID: "res-011", Name: "k8s-master-01",
 			HostName: "k8s-master-01", IPAddress: "10.0.4.10",
 			Type: "Linux", State: "active", OSName: "Ubuntu 22.04",
 			AgentInstalled: true, Status: "managed", ResourceType: "Linux",
-			Cloud: "GCP", Region: "us-central1", InstanceSize: "e2-standard-4",
-			Tags:    map[string]string{"env": "production", "team": "platform", "role": "k8s-master", "cluster": "prod-central"},
+			Cloud: "HPE GreenLake", Region: "hpe-dc-east",
+			Tags:    map[string]string{"env": "production", "team": "platform", "role": "k8s-master", "cluster": "prod-greenlake", "hardware": "HPE ProLiant DL360"},
 			Metrics: getK8sMasterMetrics(),
 		},
 		{
@@ -118,8 +123,8 @@ func GetResources() []opsramp.Resource {
 			HostName: "k8s-node-01", IPAddress: "10.0.4.21",
 			Type: "Linux", State: "active", OSName: "Ubuntu 22.04",
 			AgentInstalled: true, Status: "managed", ResourceType: "Linux",
-			Cloud: "GCP", Region: "us-central1", InstanceSize: "e2-standard-8",
-			Tags:    map[string]string{"env": "production", "team": "platform", "role": "k8s-worker", "cluster": "prod-central"},
+			Cloud: "HPE GreenLake", Region: "hpe-dc-east",
+			Tags:    map[string]string{"env": "production", "team": "platform", "role": "k8s-worker", "cluster": "prod-greenlake", "hardware": "HPE ProLiant DL380"},
 			Metrics: getK8sNodeMetrics(),
 		},
 		{
@@ -127,8 +132,8 @@ func GetResources() []opsramp.Resource {
 			HostName: "k8s-node-02", IPAddress: "10.0.4.22",
 			Type: "Linux", State: "active", OSName: "Ubuntu 22.04",
 			AgentInstalled: true, Status: "managed", ResourceType: "Linux",
-			Cloud: "GCP", Region: "us-central1", InstanceSize: "e2-standard-8",
-			Tags:    map[string]string{"env": "production", "team": "platform", "role": "k8s-worker", "cluster": "prod-central"},
+			Cloud: "HPE GreenLake", Region: "hpe-dc-east",
+			Tags:    map[string]string{"env": "production", "team": "platform", "role": "k8s-worker", "cluster": "prod-greenlake", "hardware": "HPE ProLiant DL380"},
 			Metrics: getK8sNodeMetrics(),
 		},
 		{
@@ -136,8 +141,8 @@ func GetResources() []opsramp.Resource {
 			HostName: "k8s-node-03", IPAddress: "10.0.4.23",
 			Type: "Linux", State: "active", OSName: "Ubuntu 22.04",
 			AgentInstalled: true, Status: "managed", ResourceType: "Linux",
-			Cloud: "GCP", Region: "us-central1", InstanceSize: "e2-standard-8",
-			Tags:    map[string]string{"env": "production", "team": "platform", "role": "k8s-worker", "cluster": "prod-central"},
+			Cloud: "HPE GreenLake", Region: "hpe-dc-east",
+			Tags:    map[string]string{"env": "production", "team": "platform", "role": "k8s-worker", "cluster": "prod-greenlake", "hardware": "HPE ProLiant DL380"},
 			Metrics: getHighNetworkK8sMetrics(),
 		},
 		{
@@ -145,8 +150,8 @@ func GetResources() []opsramp.Resource {
 			HostName: "k8s-node-04", IPAddress: "10.0.4.24",
 			Type: "Linux", State: "active", OSName: "Ubuntu 22.04",
 			AgentInstalled: true, Status: "managed", ResourceType: "Linux",
-			Cloud: "GCP", Region: "us-central1", InstanceSize: "e2-standard-8",
-			Tags:    map[string]string{"env": "production", "team": "platform", "role": "k8s-worker", "cluster": "prod-central"},
+			Cloud: "HPE GreenLake", Region: "hpe-dc-east",
+			Tags:    map[string]string{"env": "production", "team": "platform", "role": "k8s-worker", "cluster": "prod-greenlake", "hardware": "HPE ProLiant DL380"},
 			Metrics: getK8sNodeMetrics(),
 		},
 

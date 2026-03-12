@@ -277,7 +277,7 @@ func printHelp() {
 	fmt.Println("  ║  • What is the blast radius for k8s-node-04?            ║")
 	fmt.Println("  ║  • How many users are affected by the k8s-node-04 issue?║")
 	fmt.Println("  ║  • Give me a remediation plan for k8s-node-04           ║")
-	fmt.Println("  ║  • Why is the payment app slow?                         ║")
+	fmt.Println("  ║  • Why is the GreenLake portal slow?                    ║")
 	fmt.Println("  ║                                                         ║")
 	fmt.Println("  ╚═══════════════════════════════════════════════════════════╝")
 	fmt.Println()

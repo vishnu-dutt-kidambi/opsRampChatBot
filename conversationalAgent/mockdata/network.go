@@ -39,18 +39,18 @@ import (
 //   │    ge-0/0/13 → monitoring-staging   (172.16.0.50)                │
 //   │    xe-0/0/0 → uplink to core                                      │
 //   │                                                                    │
-//   │  sw-gcp-central-01 (EX4300-48T) — GCP Interconnect               │
+//   │  sw-dc-east-04 (EX4300-48T) — HPE GreenLake K8s (HPE ProLiant)  │
 //   │    ge-0/0/1 → k8s-master-01        (10.0.4.10)                   │
 //   │    ge-0/0/2 → k8s-node-01          (10.0.4.21)                   │
 //   │    ge-0/0/3 → k8s-node-02          (10.0.4.22)                   │
 //   │    ge-0/0/4 → k8s-node-03          (10.0.4.23)  ⚠ PACKET LOSS   │
 //   │    ge-0/0/5 → k8s-node-04          (10.0.4.24)  ⚠ LINK FLAPS   │
-//   │    xe-0/0/0 → uplink to GCP interconnect                          │
+//   │    xe-0/0/0 → uplink to core                                      │
 //   └──────────────────────────────────────────────────────────────────────┘
 //
 // Key scenarios designed for agent correlation:
 //   1. k8s-node-03 has a latency alert → switch port shows 4.7% packet loss
-//   2. k8s-node-04 runs payment-service → switch port has link flaps
+//   2. k8s-node-04 runs greenlake-portal → switch port has link flaps
 //   3. app-server-prod-02 has memory alert → switch port shows RX errors
 //   4. web-server-prod-01 has CPU alert → switch port is clean (NOT network)
 // =============================================================================
@@ -411,16 +411,18 @@ func GetNetworkSwitches() []juniper.SwitchStats {
 			},
 		},
 
-		// ── sw-gcp-central-01: GCP K8s Interconnect Switch ──────────────
-		// This is the KEY switch for the payment-app correlation scenario.
-		// k8s-node-03 (latency alert) and k8s-node-04 (payment-service pods)
+		// ── sw-dc-east-04: On-Prem K8s Cluster Switch (HPE ProLiant) ────
+		// This is the KEY switch for the greenlake-portal correlation scenario.
+		// These are on-prem HPE ProLiant servers running Kubernetes, managed by
+		// a Juniper EX4300 switch with OpsRamp collector installed on-site.
+		// k8s-node-03 (latency alert) and k8s-node-04 (greenlake-portal pods)
 		// both connect here and have port-level issues.
 		{
 			ID:       "sw-004",
 			OrgID:    "org-acme-001",
-			SiteID:   "site-gcp-central",
-			Name:     "sw-gcp-central-01",
-			Hostname: "sw-gcp-central-01",
+			SiteID:   "site-dc-east",
+			Name:     "sw-dc-east-04",
+			Hostname: "sw-dc-east-04",
 			IP:       "10.0.4.1",
 			Mac:      "5c:45:27:d4:88:00",
 			Model:    "EX4300-48T",
@@ -434,8 +436,8 @@ func GetNetworkSwitches() []juniper.SwitchStats {
 				Idle: 78.0, System: 15.0, User: 7.0,
 			},
 			MemoryStat:  juniper.MemoryStat{Usage: 55.0},
-			Location:    "GCP us-central1, Partner Interconnect POP",
-			Description: "Access switch for GCP Kubernetes cluster via Partner Interconnect",
+			Location:    "Datacenter East, Rack C1, U10",
+			Description: "Top-of-rack switch for HPE GreenLake Kubernetes cluster running on HPE ProLiant servers (OpsRamp collector on-site)",
 			Ports: []juniper.SwitchPort{
 				// ge-0/0/1 → k8s-master-01: CLEAN
 				{
@@ -502,8 +504,8 @@ func GetNetworkSwitches() []juniper.SwitchStats {
 					NeighborSystemName: "k8s-node-03",
 					StpRole:            "designated", StpState: "forwarding",
 				},
-				// ge-0/0/5 → k8s-node-04: ⚠ LINK FLAPS (payment-service host)
-				// This correlates with ALR-20260219-008 "Container restart loop on payment-service"
+				// ge-0/0/5 → k8s-node-04: ⚠ LINK FLAPS (greenlake-portal host)
+				// This correlates with ALR-20260219-008 "Container restart loop on greenlake-portal"
 				// The link has been flapping causing intermittent connectivity
 				{
 					PortID: "ge-0/0/5", PortMac: "5c:45:27:d4:88:05",
@@ -520,7 +522,7 @@ func GetNetworkSwitches() []juniper.SwitchStats {
 					NeighborSystemName: "k8s-node-04",
 					StpRole:            "designated", StpState: "forwarding",
 				},
-				// xe-0/0/0 → uplink to GCP interconnect
+				// xe-0/0/0 → uplink to core
 				{
 					PortID: "xe-0/0/0", PortMac: "5c:45:27:d4:88:90",
 					PortUsage: "uplink", Active: true, Up: true, Disabled: false,
@@ -533,7 +535,7 @@ func GetNetworkSwitches() []juniper.SwitchStats {
 					LastFlapped: 0,
 					MacCount:    256, MacLimit: 16384,
 					NeighborMac: "aa:bb:cc:00:00:02", NeighborPortDesc: "xe-0/0/1",
-					NeighborSystemName: "gcp-interconnect-router",
+					NeighborSystemName: "core-sw-02",
 					StpRole:            "root", StpState: "forwarding",
 					XcvrModel: "SFP+-10G-LR", XcvrPartNumber: "740-021488", XcvrSerial: "N6DD4MT",
 				},
@@ -543,8 +545,28 @@ func GetNetworkSwitches() []juniper.SwitchStats {
 }
 
 // GetNetworkPortMappings returns the mapping from OpsRamp resources to their
-// connected Juniper switch ports. In production, this would be derived from
-// LLDP/CDP neighbor discovery or DCIM integration (e.g., NetBox).
+// connected Juniper switch ports.
+//
+// Correlation key: IP address.
+// Each ResourceIP here is deliberately identical to the IPAddress field of the
+// same resource in resources.go. This mirrors how production correlation works:
+//
+//	Production flow:
+//	  1. OpsRamp discovers a server and records its IP (e.g., 10.0.4.24).
+//	  2. Juniper switch learns the same IP via ARP table / LLDP neighbor on
+//	     a specific port (e.g., ge-0/0/5 on sw-dc-east-04).
+//	  3. A correlation service (DCIM like NetBox, or LLDP/CDP neighbor
+//	     discovery) joins these two records by matching IP address, producing
+//	     a mapping: OpsRamp resource ↔ Juniper switch:port.
+//
+//	Mock shortcut:
+//	  We hardcode that mapping table here. The IP addresses are kept
+//	  consistent with resources.go so the mock faithfully represents
+//	  the production join-by-IP pattern.
+//
+// The juniper.Client.findMapping() function (juniper/client.go) looks up
+// entries in this table by ResourceIP, ResourceName, or ResourceID, with
+// IP being the primary real-world correlation key.
 func GetNetworkPortMappings() []juniper.PortMapping {
 	return []juniper.PortMapping{
 		// sw-dc-east-01 (Web/App Tier)
@@ -567,11 +589,11 @@ func GetNetworkPortMappings() []juniper.PortMapping {
 		{ResourceID: "res-027", ResourceName: "jenkins-build-01", ResourceIP: "172.16.0.20", SwitchID: "sw-003", SwitchName: "sw-dc-east-03", PortID: "ge-0/0/12"},
 		{ResourceID: "res-025", ResourceName: "monitoring-agent-staging-01", ResourceIP: "172.16.0.50", SwitchID: "sw-003", SwitchName: "sw-dc-east-03", PortID: "ge-0/0/13"},
 
-		// sw-gcp-central-01 (GCP K8s Interconnect)
-		{ResourceID: "res-011", ResourceName: "k8s-master-01", ResourceIP: "10.0.4.10", SwitchID: "sw-004", SwitchName: "sw-gcp-central-01", PortID: "ge-0/0/1"},
-		{ResourceID: "res-013", ResourceName: "k8s-node-01", ResourceIP: "10.0.4.21", SwitchID: "sw-004", SwitchName: "sw-gcp-central-01", PortID: "ge-0/0/2"},
-		{ResourceID: "res-014", ResourceName: "k8s-node-02", ResourceIP: "10.0.4.22", SwitchID: "sw-004", SwitchName: "sw-gcp-central-01", PortID: "ge-0/0/3"},
-		{ResourceID: "res-015", ResourceName: "k8s-node-03", ResourceIP: "10.0.4.23", SwitchID: "sw-004", SwitchName: "sw-gcp-central-01", PortID: "ge-0/0/4"},
-		{ResourceID: "res-016", ResourceName: "k8s-node-04", ResourceIP: "10.0.4.24", SwitchID: "sw-004", SwitchName: "sw-gcp-central-01", PortID: "ge-0/0/5"},
+		// sw-dc-east-04 (On-Prem K8s Cluster)
+		{ResourceID: "res-011", ResourceName: "k8s-master-01", ResourceIP: "10.0.4.10", SwitchID: "sw-004", SwitchName: "sw-dc-east-04", PortID: "ge-0/0/1"},
+		{ResourceID: "res-013", ResourceName: "k8s-node-01", ResourceIP: "10.0.4.21", SwitchID: "sw-004", SwitchName: "sw-dc-east-04", PortID: "ge-0/0/2"},
+		{ResourceID: "res-014", ResourceName: "k8s-node-02", ResourceIP: "10.0.4.22", SwitchID: "sw-004", SwitchName: "sw-dc-east-04", PortID: "ge-0/0/3"},
+		{ResourceID: "res-015", ResourceName: "k8s-node-03", ResourceIP: "10.0.4.23", SwitchID: "sw-004", SwitchName: "sw-dc-east-04", PortID: "ge-0/0/4"},
+		{ResourceID: "res-016", ResourceName: "k8s-node-04", ResourceIP: "10.0.4.24", SwitchID: "sw-004", SwitchName: "sw-dc-east-04", PortID: "ge-0/0/5"},
 	}
 }

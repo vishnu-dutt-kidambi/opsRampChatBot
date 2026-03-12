@@ -18,10 +18,6 @@ type chatReqBody struct {
 	Message string `json:"message"`
 }
 
-type chatRespBody struct {
-	Answer string `json:"answer"`
-}
-
 // startWebServer launches the HTTP server with a chat API and embedded UI.
 func startWebServer(addr string, opsAgent *agent.Agent) {
 	var mu sync.Mutex // serialize agent calls (single-user agent)
@@ -30,8 +26,8 @@ func startWebServer(addr string, opsAgent *agent.Agent) {
 	webFS, _ := fs.Sub(webContent, "web")
 	http.Handle("/", http.FileServer(http.FS(webFS)))
 
-	// Chat endpoint
-	http.HandleFunc("/api/chat", func(w http.ResponseWriter, r *http.Request) {
+	// Streaming chat endpoint — Server-Sent Events (SSE)
+	http.HandleFunc("/api/chat/stream", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "POST only", http.StatusMethodNotAllowed)
 			return
@@ -47,17 +43,25 @@ func startWebServer(addr string, opsAgent *agent.Agent) {
 			return
 		}
 
-		mu.Lock()
-		answer, err := opsAgent.Ask(req.Message)
-		mu.Unlock()
+		// SSE headers
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.Header().Set("Connection", "keep-alive")
+		w.Header().Set("X-Accel-Buffering", "no") // disable nginx buffering
 
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			http.Error(w, "streaming not supported", http.StatusInternalServerError)
 			return
 		}
 
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(chatRespBody{Answer: answer})
+		mu.Lock()
+		opsAgent.AskStream(req.Message, func(evt agent.StreamEvent) {
+			data, _ := json.Marshal(evt)
+			fmt.Fprintf(w, "data: %s\n\n", data)
+			flusher.Flush()
+		})
+		mu.Unlock()
 	})
 
 	// Clear conversation endpoint

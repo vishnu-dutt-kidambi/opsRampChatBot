@@ -451,6 +451,33 @@
         .message-bubble th {
             background: var(--surface2);
         }
+
+        /* SSE streaming status indicators */
+        .stream-status {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 13px;
+            color: var(--primary);
+            padding: 4px 0;
+        }
+
+        .stream-status .spinner {
+            width: 14px;
+            height: 14px;
+            border: 2px solid var(--border);
+            border-top-color: var(--primary);
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+
+        .stream-status.completed {
+            color: var(--success);
+        }
+
+        .stream-status.completed .spinner {
+            display: none;
+        }
     </style>
 </head>
 
@@ -507,7 +534,7 @@
                 <button class="quick-action" onclick="sendQuick('Give me a remediation plan for k8s-node-04')">
                     <span class="qa-icon">🛠️</span> Remediation plan
                 </button>
-                <button class="quick-action" onclick="sendQuick('Why is the payment app slow?')">
+                <button class="quick-action" onclick="sendQuick('Why is the GreenLake portal slow?')">
                     <span class="qa-icon">🚀</span> End-to-end investigation
                 </button>
             </div>
@@ -659,27 +686,90 @@
             inputField.style.height = 'auto';
             isWaiting = true;
             sendBtn.disabled = true;
-            showTyping();
+
+            // Container for live status indicators
+            const statusArea = document.createElement('div');
+            statusArea.className = 'stream-status-area';
+            chatContainer.appendChild(statusArea);
+
+            let answerBubble = null;
+            let answerTokens = '';
 
             try {
-                const resp = await fetch('/api/chat', {
+                const resp = await fetch('/api/chat/stream', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ message: text })
                 });
 
-                hideTyping();
-
                 if (!resp.ok) {
                     const err = await resp.text();
                     addMessage('agent', `<p style="color:var(--critical)">Error: ${escapeHtml(err)}</p>`);
+                    statusArea.remove();
                     return;
                 }
 
-                const data = await resp.json();
-                addMessage('agent', renderMarkdown(data.answer));
+                const reader = resp.body.getReader();
+                const decoder = new TextDecoder();
+                let buffer = '';
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+
+                    buffer += decoder.decode(value, { stream: true });
+                    const parts = buffer.split('\n\n');
+                    buffer = parts.pop(); // keep incomplete chunk
+
+                    for (const part of parts) {
+                        const line = part.trim();
+                        if (!line.startsWith('data: ')) continue;
+                        const json_str = line.slice(6);
+                        let evt;
+                        try { evt = JSON.parse(json_str); } catch { continue; }
+
+                        if (evt.type === 'status') {
+                            // Mark previous status as completed
+                            const prev = statusArea.querySelector('.stream-status:not(.completed)');
+                            if (prev) {
+                                prev.classList.add('completed');
+                                prev.innerHTML = `✓ ${prev.dataset.label}`;
+                            }
+                            // Add new spinner
+                            const el = document.createElement('div');
+                            el.className = 'stream-status';
+                            el.dataset.label = evt.text;
+                            el.innerHTML = `<div class="spinner"></div> ${escapeHtml(evt.text)}`;
+                            statusArea.appendChild(el);
+                            scrollToBottom();
+                        } else if (evt.type === 'token') {
+                            // Mark last status completed on first token
+                            if (!answerBubble) {
+                                const prev = statusArea.querySelector('.stream-status:not(.completed)');
+                                if (prev) {
+                                    prev.classList.add('completed');
+                                    prev.innerHTML = `✓ ${prev.dataset.label}`;
+                                }
+                                // Create agent answer bubble
+                                const wrapper = document.createElement('div');
+                                wrapper.className = 'message agent';
+                                wrapper.innerHTML = `
+                                    <div class="message-avatar" style="background:var(--surface2);border:1px solid var(--border)">⚡</div>
+                                    <div class="message-bubble"></div>`;
+                                chatContainer.appendChild(wrapper);
+                                answerBubble = wrapper.querySelector('.message-bubble');
+                            }
+                            answerTokens += evt.text;
+                            answerBubble.innerHTML = renderMarkdown(answerTokens);
+                            scrollToBottom();
+                        } else if (evt.type === 'done') {
+                            // Finished
+                        } else if (evt.type === 'error') {
+                            addMessage('agent', `<p style="color:var(--critical)">Error: ${escapeHtml(evt.text)}</p>`);
+                        }
+                    }
+                }
             } catch (err) {
-                hideTyping();
                 addMessage('agent', `<p style="color:var(--critical)">Connection error: ${escapeHtml(err.message)}</p>`);
             } finally {
                 isWaiting = false;

@@ -17,31 +17,98 @@ import (
 // =============================================================================
 // Agent Orchestrator — Tool-Calling LLM Agent for OpsRamp Operations
 // =============================================================================
-//
-// ARCHITECTURE:
-//
-//   User Question
-//        |
-//        v
-//   +-------------+
-//   | LLM (Chat)  | --- system prompt includes tool descriptions
-//   +------+------+
-//          | tool_call response (e.g., search_alerts with args)
-//          v
-//   +-------------+
-//   | Tool Router  | --- dispatches to correct OpsRamp mock client method
-//   +------+------+
-//          | JSON result
-//          v
-//   +-------------+
-//   | LLM (Chat)  | --- receives tool result, generates human answer
-//   +------+------+
-//          |
-//          v
-//     Final Answer
-//
-// The agent uses Ollama's /api/chat endpoint with native tool-calling support.
-// =============================================================================
+
+// identityResponse is the canned answer returned when the user asks about
+// the assistant's capabilities. Handled in code so it's deterministic,
+// instant, and immune to LLM prompt-following variability.
+const identityResponse = `I'm an **HPE Operations Assistant**. I have **10 capabilities** spanning monitoring, network analysis, and guided remediation:
+
+**1. Alert Search** — Search alerts by severity (Critical/Warning/Info), priority (P0-P5), resource name, or keywords.
+   Example: "Show me all critical alerts" or "Any alerts about CPU?"
+
+**2. Resource Search** — Find and inspect servers, databases, containers across AWS, Azure, GCP, HPE GreenLake, and on-premises environments.
+   Example: "List all AWS resources" or "Show HPE GreenLake servers"
+
+**3. Incident Search** — Search tickets by status (New/Open/Pending/Resolved/Closed), priority, SLA breach status.
+   Example: "Show open incidents" or "Any urgent incidents?"
+
+**4. Resource Investigation** — Deep-dive into a specific resource — combining its alerts, metrics (CPU/memory/disk/network), and incidents.
+   Example: "Investigate web-server-prod-01"
+
+**5. Environment Summary** — Overview of your entire infrastructure — resource counts, alert breakdown, incident status, cloud distribution.
+   Example: "Give me an environment summary"
+
+**6. Capacity Forecasting** — Predict when resources will hit capacity thresholds based on 30-day metric trends using linear regression.
+   Example: "Predict capacity for web-server-prod-01" or "When will the database run out of disk?"
+
+**7. Knowledge Base / Runbooks** — Search operations runbooks for troubleshooting procedures, incident response steps, and best practices.
+   Example: "What's the runbook for high CPU?" or "How do I troubleshoot disk space issues?"
+
+**8. Network Correlation (Juniper)** — Correlate server or application issues with Juniper network switch telemetry (packet loss, CRC errors, link flaps, latency, jitter). Accepts both server names and application names — app names are automatically resolved to their hosting server via dependency graph.
+   Example: "Correlate network for greenlake-portal" or "Is network causing the latency on web-server-prod-01?"
+
+**9. Blast Radius Analysis** — Map the full impact of an infrastructure issue across applications, services, and user groups. Traverses the dependency graph: server → applications → downstream services → end users.
+   Example: "What's the blast radius for greenlake-portal?" or "How many users are affected by k8s-node-04?"
+
+**10. Guided Remediation** — Generate step-by-step remediation plans with exact CLI commands for network issues. Each step includes the command, target device, risk level, and approval requirements.
+   Example: "Give me a remediation plan for greenlake-portal" or "How do I fix the network issue on k8s-node-04?"
+
+These 10 tools work together for **end-to-end investigation**. When you ask "Why is greenlake portal slow?", I automatically chain: Alert Search → Resource Investigation → Network Correlation → Blast Radius → Knowledge Base → Guided Remediation to identify the root cause, assess impact, and provide a fix.`
+
+// isIdentityQuestion returns true when the user is asking about the assistant's
+// identity, capabilities, or how it can help. Uses broad keyword matching so
+// synonyms and rephrasings are caught without relying on LLM prompt-following.
+func isIdentityQuestion(q string) bool {
+	lower := strings.ToLower(strings.TrimSpace(q))
+
+	// Strip trailing punctuation for cleaner matching
+	lower = strings.TrimRight(lower, "?!. ")
+
+	// Exact / near-exact matches — short questions that are almost always identity
+	exact := []string{
+		"help", "help me",
+		"who are you", "what are you",
+		"tell me about yourself", "introduce yourself",
+		"what can you do", "what do you do", "what can you help with",
+		"what are your capabilities", "what are your features",
+		"what all can you do", "what all do you do",
+		"what tools do you have", "what tools are available",
+		"how can you help", "how can you help me", "how can you assist",
+		"what can i ask", "what can i ask you",
+		"what do you support", "what do you offer",
+	}
+	for _, e := range exact {
+		if lower == e {
+			return true
+		}
+	}
+
+	// Keyword-group matching — if the question contains BOTH a subject word
+	// (you/your/assistant/autopilot) AND a capability word, it's identity.
+	subjectWords := []string{"you", "your", "yourself", "assistant", "autopilot", "bot", "chatbot", "agent"}
+	capabilityWords := []string{
+		"capabilit", "feature", "do for", "help with", "assist with",
+		"able to", "capable", "support", "offer", "function",
+		"purpose", "skill", "power", "abilit",
+	}
+
+	hasSubject := false
+	for _, s := range subjectWords {
+		if strings.Contains(lower, s) {
+			hasSubject = true
+			break
+		}
+	}
+	hasCap := false
+	for _, c := range capabilityWords {
+		if strings.Contains(lower, c) {
+			hasCap = true
+			break
+		}
+	}
+
+	return hasSubject && hasCap
+}
 
 // Agent orchestrates the conversation between the user, LLM, and OpsRamp tools.
 type Agent struct {
@@ -126,6 +193,13 @@ func (a *Agent) Ask(question string) (string, error) {
 	// Trim history before adding new message to keep context bounded
 	a.trimHistory()
 
+	// Identity questions are handled deterministically — no LLM call needed.
+	if isIdentityQuestion(question) {
+		a.history = append(a.history, ChatMessage{Role: "user", Content: question})
+		a.history = append(a.history, ChatMessage{Role: "assistant", Content: identityResponse})
+		return identityResponse, nil
+	}
+
 	a.history = append(a.history, ChatMessage{
 		Role:    "user",
 		Content: question,
@@ -182,23 +256,14 @@ func (a *Agent) Ask(question string) (string, error) {
 				})
 			}
 
-			// After processing all tool calls in this round, inject a progress
-			// checklist if any investigation tool was called. This shows the LLM
-			// a clear ✅/⬜ status of completed vs. pending steps so it knows
-			// exactly which tool to call next — preventing repeat loops.
-			hasInvestigationTool := false
-			for _, tc := range resp.Message.ToolCalls {
-				if isInvestigationTool(tc.Function.Name) {
-					hasInvestigationTool = true
-					break
-				}
-			}
-			if hasInvestigationTool {
-				progress := buildProgressChecklist(calledTools)
-				fmt.Printf("  [agent] Progress: %s\n", progress)
+			// Only inject a completion nudge when ALL 6 investigation tools are
+			// done, telling the LLM to compose its final answer. We do NOT inject
+			// a progress checklist mid-investigation because that snowballs simple
+			// queries (e.g., resource lookups) into the full 6-tool chain.
+			if countInvestigationTools(calledTools) >= 6 {
 				a.history = append(a.history, ChatMessage{
 					Role:    "tool",
-					Content: progress,
+					Content: `{"_progress": {"status": "complete", "instruction": "ALL investigation steps are DONE. Now compose your final comprehensive answer combining ALL the results above. Do NOT call any more tools."}}`,
 				})
 			}
 
@@ -246,13 +311,10 @@ func (a *Agent) Ask(question string) (string, error) {
 				Content: toolResult,
 			})
 
-			// Inject progress checklist for text-based investigation tool calls
-			if isInvestigationTool(toolName) {
-				progress := buildProgressChecklist(calledTools)
-				fmt.Printf("  [agent] Progress: %s\n", progress)
+			if countInvestigationTools(calledTools) >= 6 {
 				a.history = append(a.history, ChatMessage{
 					Role:    "tool",
-					Content: progress,
+					Content: `{"_progress": {"status": "complete", "instruction": "ALL investigation steps are DONE. Now compose your final comprehensive answer combining ALL the results above. Do NOT call any more tools."}}`,
 				})
 			}
 
@@ -358,6 +420,20 @@ func isInvestigationTool(name string) bool {
 	return false
 }
 
+// countInvestigationTools returns how many distinct investigation tools have been called.
+// Used to decide whether to inject the progress checklist — we only do so when 2+
+// investigation tools have fired, meaning the LLM is genuinely doing a multi-step
+// investigation (not just a simple "show me alerts" query).
+func countInvestigationTools(calledTools map[string]int) int {
+	count := 0
+	for _, t := range investigationSequence {
+		if calledTools[t] > 0 {
+			count++
+		}
+	}
+	return count
+}
+
 // buildProgressChecklist generates a structured progress message showing the LLM
 // which investigation steps are completed (✅) and which are pending (⬜).
 // This is injected after every tool result to proactively guide the LLM to the next step,
@@ -399,6 +475,196 @@ func buildDuplicateGuidance(calledTools map[string]int) string {
 		}
 	}
 	return "All investigation tools have been called. Now compose your final comprehensive answer combining ALL the results you have received."
+}
+
+// =========================================================================
+// Streaming Support — Server-Sent Events (SSE)
+// =========================================================================
+
+// StreamEvent is a single event pushed to the client over SSE.
+type StreamEvent struct {
+	Type string `json:"type"`           // "status", "token", "done", "error"
+	Text string `json:"text,omitempty"` // payload
+}
+
+// AskStream runs the same Ask pipeline but emits streaming events via the
+// callback so the web UI can show real-time progress (tool indicators,
+// typewriter text). Tool-calling rounds still use the non-streaming callLLM
+// internally — only the final answer is streamed token-by-token to the client.
+func (a *Agent) AskStream(question string, emit func(StreamEvent)) {
+	a.trimHistory()
+
+	// Identity questions are handled deterministically — instant, no LLM.
+	if isIdentityQuestion(question) {
+		a.history = append(a.history, ChatMessage{Role: "user", Content: question})
+		a.history = append(a.history, ChatMessage{Role: "assistant", Content: identityResponse})
+		streamAnswer(identityResponse, emit)
+		emit(StreamEvent{Type: "done"})
+		return
+	}
+
+	a.history = append(a.history, ChatMessage{
+		Role:    "user",
+		Content: question,
+	})
+
+	maxRounds := 12
+	calledTools := make(map[string]int)
+
+	emit(StreamEvent{Type: "status", Text: "Analyzing your question…"})
+
+	for round := 0; round < maxRounds; round++ {
+		resp, err := a.callLLM()
+		if err != nil {
+			emit(StreamEvent{Type: "error", Text: fmt.Sprintf("LLM call failed: %v", err)})
+			return
+		}
+
+		// --- Structured tool calls ---
+		if len(resp.Message.ToolCalls) > 0 {
+			a.history = append(a.history, resp.Message)
+
+			for _, tc := range resp.Message.ToolCalls {
+				toolName := tc.Function.Name
+				calledTools[toolName]++
+
+				// Block duplicates BEFORE emitting status so the UI never shows them
+				if calledTools[toolName] > 1 {
+					fmt.Printf("  [agent] DUPLICATE blocked (stream): %s (call #%d)\n", toolName, calledTools[toolName])
+					guidance := buildDuplicateGuidance(calledTools)
+					a.history = append(a.history, ChatMessage{
+						Role:    "tool",
+						Content: fmt.Sprintf(`{"skipped": true, "reason": "You already called %s.", "next_action": "%s"}`, toolName, guidance),
+					})
+					continue
+				}
+
+				emit(StreamEvent{Type: "status", Text: fmt.Sprintf("Calling %s …", toolDisplayName(toolName))})
+
+				toolResult, err := a.executeTool(tc)
+				if err != nil {
+					toolResult = fmt.Sprintf(`{"error": "%s"}`, err.Error())
+				}
+				if len(toolResult) > maxToolResultLen {
+					toolResult = toolResult[:maxToolResultLen] + `...{"truncated": true}`
+				}
+				a.history = append(a.history, ChatMessage{
+					Role:    "tool",
+					Content: toolResult,
+				})
+			}
+
+			// Only inject progress checklist during genuine multi-tool investigations
+			if countInvestigationTools(calledTools) >= 2 {
+				progress := buildProgressChecklist(calledTools)
+				a.history = append(a.history, ChatMessage{Role: "tool", Content: progress})
+			}
+			continue
+		}
+
+		// --- Text-based tool call (Mistral fallback) ---
+		if tc, ok := a.parseToolCallFromText(resp.Message.Content); ok {
+			toolName := tc.Name
+			calledTools[toolName]++
+
+			// Block duplicates BEFORE emitting status
+			if calledTools[toolName] > 1 {
+				fmt.Printf("  [agent] DUPLICATE blocked (stream/text): %s (call #%d)\n", toolName, calledTools[toolName])
+				guidance := buildDuplicateGuidance(calledTools)
+				a.history = append(a.history, ChatMessage{Role: "assistant", Content: resp.Message.Content})
+				a.history = append(a.history, ChatMessage{
+					Role:    "tool",
+					Content: fmt.Sprintf(`{"skipped": true, "reason": "You already called %s.", "next_action": "%s"}`, toolName, guidance),
+				})
+				continue
+			}
+
+			emit(StreamEvent{Type: "status", Text: fmt.Sprintf("Calling %s …", toolDisplayName(toolName))})
+
+			a.history = append(a.history, resp.Message)
+			opts := tools.ExecuteOptions{KB: a.kb, Juniper: a.juniper}
+			toolResult, err := tools.ExecuteWithOptions(a.client, tc, opts)
+			if err != nil {
+				toolResult = fmt.Sprintf(`{"error": "%s"}`, err.Error())
+			}
+			if len(toolResult) > maxToolResultLen {
+				toolResult = toolResult[:maxToolResultLen] + `...{"truncated": true}`
+			}
+			a.history = append(a.history, ChatMessage{Role: "tool", Content: toolResult})
+
+			// Only inject progress checklist during genuine multi-tool investigations
+			if countInvestigationTools(calledTools) >= 2 {
+				progress := buildProgressChecklist(calledTools)
+				a.history = append(a.history, ChatMessage{Role: "tool", Content: progress})
+			}
+			continue
+		}
+
+		// --- Final answer — stream it token-by-token ---
+		answer := resp.Message.Content
+		a.history = append(a.history, ChatMessage{Role: "assistant", Content: answer})
+
+		streamAnswer(answer, emit)
+		emit(StreamEvent{Type: "done"})
+		return
+	}
+
+	msg := "I wasn't able to complete the investigation within the allowed steps. Please try a more specific question."
+	emit(StreamEvent{Type: "token", Text: msg})
+	emit(StreamEvent{Type: "done"})
+}
+
+// streamAnswer breaks an answer into small chunks and emits them as "token"
+// events, giving the UI a typewriter effect. It processes line-by-line so that
+// newlines (and therefore markdown formatting) are preserved in the output.
+func streamAnswer(answer string, emit func(StreamEvent)) {
+	lines := strings.Split(answer, "\n")
+	for i, line := range lines {
+		if line == "" {
+			// Preserve blank lines (paragraph breaks in markdown)
+			emit(StreamEvent{Type: "token", Text: "\n"})
+			continue
+		}
+		// Chunk words within each line for typewriter effect
+		words := strings.Fields(line)
+		chunk := 3
+		for j := 0; j < len(words); j += chunk {
+			end := j + chunk
+			if end > len(words) {
+				end = len(words)
+			}
+			text := strings.Join(words[j:end], " ")
+			if end < len(words) {
+				text += " " // space between word groups within the line
+			}
+			emit(StreamEvent{Type: "token", Text: text})
+		}
+		// Emit newline after each line (except the last)
+		if i < len(lines)-1 {
+			emit(StreamEvent{Type: "token", Text: "\n"})
+		}
+	}
+}
+
+// toolDisplayName returns a human-friendly label for a tool name.
+func toolDisplayName(name string) string {
+	friendly := map[string]string{
+		"search_alerts":           "Search Alerts",
+		"search_resources":        "Search Resources",
+		"get_resource_details":    "Get Resource Details",
+		"search_incidents":        "Search Incidents",
+		"investigate_resource":    "Investigate Resource",
+		"get_environment_summary": "Get Environment Summary",
+		"predict_capacity":        "Predict Capacity",
+		"search_knowledge_base":   "Search Knowledge Base",
+		"correlate_network":       "Correlate Network",
+		"blast_radius":            "Blast Radius",
+		"get_remediation_plan":    "Get Remediation Plan",
+	}
+	if f, ok := friendly[name]; ok {
+		return f
+	}
+	return name
 }
 
 // ClearHistory resets the conversation history (keeps system prompt).
@@ -529,90 +795,28 @@ func (a *Agent) executeTool(tc LLMToolCall) (string, error) {
 // NOTE: Tool descriptions are NOT included here — they are sent via the structured
 // "tools" field in the chat API request. This avoids duplicating ~600 tokens.
 func buildSystemPrompt() string {
-	return `You are an OpsRamp Operations Assistant — an IT Operations agent with access to OpsRamp monitoring tools.
+	return `You are an HPE Operations Assistant — an AI-powered IT Operations agent that combines OpsRamp monitoring, Juniper network telemetry, and operations knowledge base into a single investigative tool.
 
-IDENTITY & META QUESTIONS:
-When the user asks about your capabilities, what you can do, who you are, how you can help,
-what tools you have, or anything about yourself — respond DIRECTLY from this section.
-Do NOT call any tools for such questions. Here is what you should tell them:
-
-I'm an OpsRamp Operations Assistant. Here's what I can help you with:
-
-**Alerts:**
-  - Search alerts by severity (Critical/Warning/Info), priority (P0-P5), resource name, or keywords
-  - Example: "Show me all critical alerts" or "Any alerts about CPU?"
-
-**Resources:**
-  - Find and inspect servers, databases, containers across AWS, Azure, GCP, and on-premises
-  - Example: "List all AWS resources" or "Show servers in GCP us-central1"
-
-**Incidents:**
-  - Search tickets by status (New/Open/Pending/Resolved/Closed), priority, SLA breach status
-  - Example: "Show open incidents" or "Any urgent incidents?"
-
-**Investigation:**
-  - Deep-dive into a specific resource — combining its alerts, metrics (CPU/memory/disk/network), and incidents
-  - Example: "Investigate web-server-prod-01"
-
-**Environment Summary:**
-  - Overview of your entire infrastructure — resource counts, alert breakdown, incident status, cloud distribution
-  - Example: "Give me an environment summary"
-
-**Capacity Forecasting:**
-  - Predict when resources will hit capacity thresholds based on 30-day metric trends
-  - Uses linear regression on historical CPU, memory, and disk usage data
-  - Example: "Predict capacity for web-server-prod-01" or "When will the database run out of disk?"
-
-**Knowledge Base / Runbooks:**
-  - Search operations runbooks for troubleshooting procedures, incident response steps, and best practices
-  - Covers: high CPU, disk full, memory leaks, container crashes, network issues, database performance, SSL certificates
-  - Example: "What's the runbook for high CPU?" or "How do I troubleshoot disk space issues?"
-
-**Network Correlation (Juniper):**
-  - Correlate server or application issues with Juniper network switch telemetry (packet loss, CRC errors, link flaps, latency, jitter)
-  - Accepts both server names (e.g., "k8s-node-04") and application names (e.g., "payment-service") — app names are automatically resolved to their hosting server
-  - Checks the physical switch port connected to the server to determine if network is the root cause
-  - Covers: Juniper EX switches managed via Mist API, port errors, duplex mismatch, link stability
-  - Example: "Correlate network for payment-service" or "Is network causing the latency on web-server-prod-01?"
-
-**Blast Radius Analysis:**
-  - Map the full impact of an infrastructure issue across applications, services, and user groups
-  - Accepts both server names and application names — app names are resolved to the hosting server
-  - Traverses the dependency graph: server → applications → downstream services → end users
-  - Shows affected application count, user count, severity, and business impact
-  - Example: "What's the blast radius for payment-service?" or "How many users are affected by k8s-node-04?"
-
-**Guided Remediation:**
-  - Generate step-by-step remediation plans with exact CLI commands for network issues
-  - Accepts both server names and application names — app names are resolved to the hosting server
-  - Each step includes the command, target device, risk level, and approval requirements
-  - Covers: interface bounce, speed/duplex configuration, cable check, QoS analysis
-  - Example: "Give me a remediation plan for payment-service" or "How do I fix the network issue on k8s-node-04?"
-
-Examples of meta questions you must answer WITHOUT tools:
-- "What can you do?" / "What are your capabilities?" / "What are you capable of?"
-- "Who are you?" / "Tell me about yourself" / "How can you help me?"
-- "What tools do you have?" / "What can you monitor?" / "What can I explore?"
-- "Can you predict capacity?" / "Can you do forecasting?"
+IMPORTANT ARCHITECTURE NOTE: The Juniper network correlation capability is NOT limited to traditional on-premises infrastructure. It works for ANY environment where physical Juniper switches provide network connectivity and an OpsRamp collector is deployed — this includes HPE GreenLake (HPE-managed cloud), customer datacenters, colocation facilities, and edge sites. Pure public cloud (AWS/Azure/GCP) resources typically do not have physical Juniper switch visibility, so network correlation is not available for those.
 
 TOOL USAGE RULES:
 - When a user asks about specific alerts, resources, incidents, or infrastructure STATE, you MUST call the appropriate tool first. NEVER fabricate data.
 - When a user asks about capacity predictions, forecasts, trends, or when a resource will run out of space/CPU/memory, use the predict_capacity tool.
 - When a user asks about runbooks, troubleshooting procedures, how to fix something, escalation contacts, or incident response steps, use the search_knowledge_base tool.
-- For overview/summary questions, use the get_environment_summary tool.
+- For overview/summary questions about the infrastructure (e.g., "give me an environment summary", "how many resources do we have?"), use the get_environment_summary tool.
 - Do NOT describe what tool you would use in text. Actually invoke the tool using the function calling mechanism.
 - NEVER invent resource names like "Server-A" or "Database-X". All data must come from tool results.
-- When the user mentions an application name (e.g., "payment app", "payment-service", "order-service", "checkout"), you can pass it directly to correlate_network, blast_radius, or get_remediation_plan. You do NOT need to first look up the server name — the tools resolve application names to servers automatically.
+- When the user mentions an application name (e.g., "greenlake portal", "greenlake-portal", "aruba-central", "dscc-console"), you can pass it directly to correlate_network, blast_radius, or get_remediation_plan. You do NOT need to first look up the server name — the tools resolve application names to servers automatically.
 
 MULTI-TOOL INVESTIGATION (CRITICAL — READ CAREFULLY):
-When a user asks WHY something is slow, broken, or having issues (e.g., "Why is the payment app slow?",
-"What's wrong with order-service?", "Investigate the checkout issues"), you MUST run a FULL multi-tool
+When a user asks WHY something is slow, broken, or having issues (e.g., "Why is the GreenLake portal slow?",
+"What's wrong with aruba-central?", "Investigate the DSCC issues"), you MUST run a FULL multi-tool
 investigation. Do NOT stop after just one tool. The slowness could be caused by server-level problems
 (high CPU, memory, disk), application-level alerts, OR network-level issues. You must check ALL layers.
 
 Call ALL of the following 6 tools in this exact sequence:
 
-  Step 1: search_alerts(query="<app or service name, e.g., payment>")
+  Step 1: search_alerts(query="<app or service name, e.g., greenlake>")
           → Find any active alerts related to the application or its hosting infrastructure.
           → This may reveal HTTP latency alerts, CPU spikes, memory pressure, etc.
           → The alert results will tell you WHICH SERVER hosts the app (e.g., k8s-node-04).
@@ -659,6 +863,13 @@ AFTER receiving ALL tool results:
 - Include relevant runbook procedures
 - Highlight items requiring approval
 - Suggest escalation if the impact is critical
+
+RESPONSE GUIDELINES (CRITICAL):
+- For SIMPLE queries (runbook lookup, single alert search, resource list, environment summary, capacity forecast), respond by SUMMARIZING the tool results you received. Do NOT fabricate additional context, investigation data, server names, alert IDs, or metrics that were not in the tool output.
+- Only perform a MULTI-TOOL INVESTIGATION when the user specifically asks WHY something is broken, slow, or having issues.
+- If the user asks "What is the runbook for X?" — call search_knowledge_base and present the runbook content. Do NOT invent fake servers, alerts, or incidents around it.
+- If the user asks "Show me critical alerts" — call search_alerts and list what comes back. Do NOT then investigate each alert unless asked.
+- NEVER fabricate resource names (e.g., "server01"), alert IDs (e.g., "A-1234"), metric values, or incident details. Every piece of data in your response MUST come from a tool result.
 
 If the user greets you or asks a general question not about infrastructure, respond conversationally without tools.`
 }

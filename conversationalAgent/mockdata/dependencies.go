@@ -27,22 +27,22 @@ import (
 //   application --depends_on-->  application  (inter-service dependencies)
 //   application --serves-->    user_group
 //
-// Key Scenario (Payment App Slowdown):
-//   sw-gcp-central-01:ge-0/0/5 (link flaps, packet loss)
-//     └─ k8s-node-04 (server)
-//         ├─ payment-service (critical app)
+// Key Scenario (GreenLake Portal Slowdown):
+//   sw-dc-east-04:ge-0/0/5 (link flaps, packet loss)
+//     └─ k8s-node-04 (on-prem HPE ProLiant server)
+//         ├─ greenlake-portal (critical app)
 //         │   └─ depends_on: db-primary-01:postgresql
 //         │   └─ depends_on: redis-cache-01:redis-sessions
-//         │   └─ serves: online-shoppers (3000 users)
-//         │   └─ serves: mobile-app-users (2000 users)
-//         └─ order-service (high app)
-//             └─ depends_on: payment-service
+//         │   └─ serves: greenlake-tenants (3000 users)
+//         │   └─ serves: aruba-wifi-users (2000 users)
+//         └─ aruba-central (high app)
+//             └─ depends_on: greenlake-portal
 //             └─ depends_on: rabbitmq-prod-01:rabbitmq
-//             └─ serves: online-shoppers
+//             └─ serves: greenlake-tenants
 //
 //   Total blast radius from ge-0/0/5 issues:
-//     3 applications (payment-service, order-service, checkout-ui)
-//     5,000 users (3000 online-shoppers + 2000 mobile-app-users)
+//     3 applications (greenlake-portal, aruba-central, dscc-console)
+//     5,000 users (3000 greenlake-tenants + 2000 aruba-wifi-users)
 // =============================================================================
 
 // GetDependencyNodes returns all nodes in the infrastructure dependency graph.
@@ -65,9 +65,9 @@ func GetDependencyNodes() []juniper.DependencyNode {
 			Metadata: map[string]string{"model": "EX4300-48T", "site": "dc-east", "role": "infra-tor"},
 		},
 		{
-			ID: "sw-004", Name: "sw-gcp-central-01", Type: "switch",
+			ID: "sw-004", Name: "sw-dc-east-04", Type: "switch",
 			Layer: "network", Criticality: "critical",
-			Metadata: map[string]string{"model": "EX4300-48T", "site": "gcp-central", "role": "k8s-interconnect"},
+			Metadata: map[string]string{"model": "EX4300-48T", "site": "dc-east", "role": "k8s-greenlake-tor"},
 		},
 
 		// ── Compute Layer (Servers) ─────────────────────────────────────
@@ -123,65 +123,65 @@ func GetDependencyNodes() []juniper.DependencyNode {
 		},
 		{
 			ID: "res-011", Name: "k8s-master-01", Type: "server",
-			Layer: "compute", Cloud: "GCP", Region: "us-central1", Criticality: "critical",
-			Metadata: map[string]string{"role": "k8s-master"},
+			Layer: "compute", Cloud: "HPE GreenLake", Region: "hpe-dc-east", Criticality: "critical",
+			Metadata: map[string]string{"role": "k8s-master", "hardware": "HPE ProLiant DL360"},
 		},
 		{
 			ID: "res-013", Name: "k8s-node-01", Type: "server",
-			Layer: "compute", Cloud: "GCP", Region: "us-central1", Criticality: "high",
-			Metadata: map[string]string{"role": "k8s-worker"},
+			Layer: "compute", Cloud: "HPE GreenLake", Region: "hpe-dc-east", Criticality: "high",
+			Metadata: map[string]string{"role": "k8s-worker", "hardware": "HPE ProLiant DL380"},
 		},
 		{
 			ID: "res-014", Name: "k8s-node-02", Type: "server",
-			Layer: "compute", Cloud: "GCP", Region: "us-central1", Criticality: "high",
-			Metadata: map[string]string{"role": "k8s-worker"},
+			Layer: "compute", Cloud: "HPE GreenLake", Region: "hpe-dc-east", Criticality: "high",
+			Metadata: map[string]string{"role": "k8s-worker", "hardware": "HPE ProLiant DL380"},
 		},
 		{
 			ID: "res-015", Name: "k8s-node-03", Type: "server",
-			Layer: "compute", Cloud: "GCP", Region: "us-central1", Criticality: "high",
-			Metadata: map[string]string{"role": "k8s-worker"},
+			Layer: "compute", Cloud: "HPE GreenLake", Region: "hpe-dc-east", Criticality: "high",
+			Metadata: map[string]string{"role": "k8s-worker", "hardware": "HPE ProLiant DL380"},
 		},
 		{
 			ID: "res-016", Name: "k8s-node-04", Type: "server",
-			Layer: "compute", Cloud: "GCP", Region: "us-central1", Criticality: "critical",
-			Metadata: map[string]string{"role": "k8s-worker", "note": "hosts payment-service pods"},
+			Layer: "compute", Cloud: "HPE GreenLake", Region: "hpe-dc-east", Criticality: "critical",
+			Metadata: map[string]string{"role": "k8s-worker", "hardware": "HPE ProLiant DL380", "note": "hosts greenlake-portal pods"},
 		},
 
 		// ── Application Layer ───────────────────────────────────────────
 		{
-			ID: "app-payment", Name: "payment-service", Type: "application",
+			ID: "app-greenlake", Name: "greenlake-portal", Type: "application",
 			Layer: "application", Criticality: "critical",
 			Metadata: map[string]string{
 				"port": "8443", "protocol": "HTTPS",
-				"team": "payments", "pagerduty": "payments-oncall",
-				"description": "Handles all payment processing, credit card tokenization, and transaction settlements",
+				"team": "greenlake", "pagerduty": "greenlake-oncall",
+				"description": "HPE GreenLake cloud platform portal — tenant provisioning, resource management, and billing",
 			},
 		},
 		{
-			ID: "app-order", Name: "order-service", Type: "application",
+			ID: "app-aruba", Name: "aruba-central", Type: "application",
 			Layer: "application", Criticality: "critical",
 			Metadata: map[string]string{
 				"port": "8080", "protocol": "HTTP",
-				"team": "commerce", "pagerduty": "commerce-oncall",
-				"description": "Order lifecycle management — create, update, fulfill, cancel orders",
+				"team": "networking", "pagerduty": "aruba-oncall",
+				"description": "Aruba Central — network management, AP monitoring, SD-WAN orchestration",
 			},
 		},
 		{
-			ID: "app-checkout", Name: "checkout-ui", Type: "application",
+			ID: "app-dscc", Name: "dscc-console", Type: "application",
 			Layer: "application", Criticality: "critical",
 			Metadata: map[string]string{
 				"port": "3000", "protocol": "HTTPS",
-				"team": "frontend", "pagerduty": "frontend-oncall",
-				"description": "Customer-facing checkout experience — cart, payment form, order confirmation",
+				"team": "storage", "pagerduty": "storage-oncall",
+				"description": "HPE Data Services Cloud Console — storage provisioning, data protection, and cloud volumes",
 			},
 		},
 		{
-			ID: "app-catalog", Name: "product-catalog", Type: "application",
+			ID: "app-oneview", Name: "oneview-api", Type: "application",
 			Layer: "application", Criticality: "high",
 			Metadata: map[string]string{
 				"port": "8081", "protocol": "HTTP",
-				"team":        "commerce",
-				"description": "Product listings, search, and inventory management",
+				"team":        "infrastructure",
+				"description": "HPE OneView — server hardware management, firmware updates, and template deployment",
 			},
 		},
 		{
@@ -207,8 +207,8 @@ func GetDependencyNodes() []juniper.DependencyNode {
 			Layer: "application", Criticality: "high",
 			Metadata: map[string]string{
 				"port": "9200", "protocol": "HTTP",
-				"team":        "commerce",
-				"description": "Full-text product search powered by Elasticsearch",
+				"team":        "infrastructure",
+				"description": "Full-text search across infrastructure inventory powered by Elasticsearch",
 			},
 		},
 		{
@@ -226,7 +226,7 @@ func GetDependencyNodes() []juniper.DependencyNode {
 			Metadata: map[string]string{
 				"port": "443", "protocol": "HTTPS",
 				"team":        "frontend",
-				"description": "Main website — product browsing, account management, order tracking",
+				"description": "Main HPE management console — dashboard, resource browsing, account management",
 			},
 		},
 		{
@@ -241,38 +241,38 @@ func GetDependencyNodes() []juniper.DependencyNode {
 
 		// ── User Layer (User Groups / Customer Segments) ────────────────
 		{
-			ID: "ug-online-shoppers", Name: "online-shoppers", Type: "user_group",
+			ID: "ug-greenlake-tenants", Name: "greenlake-tenants", Type: "user_group",
 			Layer: "user", Criticality: "critical",
 			Metadata: map[string]string{
 				"estimated_users": "3000",
-				"description":     "Web browser customers actively shopping and completing purchases",
+				"description":     "HPE GreenLake cloud tenants managing compute, storage, and networking resources",
 				"revenue_impact":  "$45,000/hour",
 			},
 		},
 		{
-			ID: "ug-mobile-users", Name: "mobile-app-users", Type: "user_group",
+			ID: "ug-aruba-wifi-users", Name: "aruba-wifi-users", Type: "user_group",
 			Layer: "user", Criticality: "critical",
 			Metadata: map[string]string{
 				"estimated_users": "2000",
-				"description":     "iOS and Android app users — browsing, ordering, and tracking deliveries",
+				"description":     "Aruba wireless network users — enterprise Wi-Fi, SD-WAN, and branch connectivity",
 				"revenue_impact":  "$30,000/hour",
 			},
 		},
 		{
-			ID: "ug-api-partners", Name: "api-partners", Type: "user_group",
+			ID: "ug-api-integrations", Name: "api-integrations", Type: "user_group",
 			Layer: "user", Criticality: "high",
 			Metadata: map[string]string{
 				"estimated_users": "150",
-				"description":     "Third-party integrators using the public API (marketplace sellers, shipping providers)",
+				"description":     "Third-party API integrations — MSP partners, ITSM connectors, and automation workflows",
 				"revenue_impact":  "$12,000/hour",
 			},
 		},
 		{
-			ID: "ug-internal-ops", Name: "internal-ops-team", Type: "user_group",
+			ID: "ug-hpe-ops-team", Name: "hpe-ops-team", Type: "user_group",
 			Layer: "user", Criticality: "medium",
 			Metadata: map[string]string{
 				"estimated_users": "50",
-				"description":     "Internal operations staff — order management, customer support, warehouse",
+				"description":     "HPE internal operations staff — SRE, platform engineering, and support",
 			},
 		},
 	}
@@ -298,7 +298,7 @@ func GetDependencyEdges() []juniper.DependencyEdge {
 		{FromID: "sw-003", ToID: "res-009", Relationship: "connects_to", Description: "ge-0/0/2 → elasticsearch-prod-01"},
 		{FromID: "sw-003", ToID: "res-010", Relationship: "connects_to", Description: "ge-0/0/3 → api-gateway-prod"},
 
-		// sw-gcp-central-01 (GCP K8s)
+		// sw-dc-east-04 (On-Prem K8s)
 		{FromID: "sw-004", ToID: "res-011", Relationship: "connects_to", Description: "ge-0/0/1 → k8s-master-01"},
 		{FromID: "sw-004", ToID: "res-013", Relationship: "connects_to", Description: "ge-0/0/2 → k8s-node-01"},
 		{FromID: "sw-004", ToID: "res-014", Relationship: "connects_to", Description: "ge-0/0/3 → k8s-node-02"},
@@ -306,13 +306,13 @@ func GetDependencyEdges() []juniper.DependencyEdge {
 		{FromID: "sw-004", ToID: "res-016", Relationship: "connects_to", Description: "ge-0/0/5 → k8s-node-04"},
 
 		// ── Compute → Application (server hosts application) ────────────
-		// k8s-node-04 hosts payment-related services (KEY for demo scenario)
-		{FromID: "res-016", ToID: "app-payment", Relationship: "hosts", Description: "k8s-node-04 runs payment-service pods"},
-		{FromID: "res-016", ToID: "app-order", Relationship: "hosts", Description: "k8s-node-04 runs order-service pods"},
-		{FromID: "res-016", ToID: "app-checkout", Relationship: "hosts", Description: "k8s-node-04 runs checkout-ui pods"},
+		// k8s-node-04 hosts HPE cloud management services (KEY for demo scenario)
+		{FromID: "res-016", ToID: "app-greenlake", Relationship: "hosts", Description: "k8s-node-04 runs greenlake-portal pods"},
+		{FromID: "res-016", ToID: "app-aruba", Relationship: "hosts", Description: "k8s-node-04 runs aruba-central pods"},
+		{FromID: "res-016", ToID: "app-dscc", Relationship: "hosts", Description: "k8s-node-04 runs dscc-console pods"},
 
-		// k8s-node-03 hosts catalog & search
-		{FromID: "res-015", ToID: "app-catalog", Relationship: "hosts", Description: "k8s-node-03 runs product-catalog pods"},
+		// k8s-node-03 hosts oneview & search
+		{FromID: "res-015", ToID: "app-oneview", Relationship: "hosts", Description: "k8s-node-03 runs oneview-api pods"},
 		{FromID: "res-015", ToID: "app-search", Relationship: "hosts", Description: "k8s-node-03 runs search-service pods"},
 
 		// k8s-node-01 hosts auth & notification
@@ -330,54 +330,54 @@ func GetDependencyEdges() []juniper.DependencyEdge {
 		{FromID: "res-010", ToID: "app-api-gw", Relationship: "hosts", Description: "api-gateway-prod runs api-gateway"},
 
 		// ── Application → Application (inter-service dependencies) ──────
-		// Payment service dependencies
-		{FromID: "app-payment", ToID: "app-user-auth", Relationship: "depends_on", Description: "payment-service validates auth tokens"},
+		// GreenLake portal dependencies
+		{FromID: "app-greenlake", ToID: "app-user-auth", Relationship: "depends_on", Description: "greenlake-portal validates auth tokens"},
 
-		// Order service dependencies
-		{FromID: "app-order", ToID: "app-payment", Relationship: "depends_on", Description: "order-service calls payment-service for charge/refund"},
-		{FromID: "app-order", ToID: "app-notification", Relationship: "depends_on", Description: "order-service triggers order confirmation notifications"},
+		// Aruba Central dependencies
+		{FromID: "app-aruba", ToID: "app-greenlake", Relationship: "depends_on", Description: "aruba-central calls greenlake-portal for tenant validation"},
+		{FromID: "app-aruba", ToID: "app-notification", Relationship: "depends_on", Description: "aruba-central triggers network event notifications"},
 
-		// Checkout UI dependencies
-		{FromID: "app-checkout", ToID: "app-payment", Relationship: "depends_on", Description: "checkout-ui submits payments to payment-service"},
-		{FromID: "app-checkout", ToID: "app-order", Relationship: "depends_on", Description: "checkout-ui creates orders via order-service"},
-		{FromID: "app-checkout", ToID: "app-catalog", Relationship: "depends_on", Description: "checkout-ui fetches product details from catalog"},
+		// DSCC Console dependencies
+		{FromID: "app-dscc", ToID: "app-greenlake", Relationship: "depends_on", Description: "dscc-console authenticates via greenlake-portal"},
+		{FromID: "app-dscc", ToID: "app-aruba", Relationship: "depends_on", Description: "dscc-console queries network topology from aruba-central"},
+		{FromID: "app-dscc", ToID: "app-oneview", Relationship: "depends_on", Description: "dscc-console fetches server inventory from oneview-api"},
 
 		// Web frontend dependencies
 		{FromID: "app-web-frontend", ToID: "app-api-gw", Relationship: "depends_on", Description: "web-frontend routes all API calls through gateway"},
 
 		// API gateway dependencies
-		{FromID: "app-api-gw", ToID: "app-checkout", Relationship: "depends_on", Description: "api-gateway routes /checkout to checkout-ui"},
-		{FromID: "app-api-gw", ToID: "app-catalog", Relationship: "depends_on", Description: "api-gateway routes /products to product-catalog"},
+		{FromID: "app-api-gw", ToID: "app-dscc", Relationship: "depends_on", Description: "api-gateway routes /storage to dscc-console"},
+		{FromID: "app-api-gw", ToID: "app-oneview", Relationship: "depends_on", Description: "api-gateway routes /servers to oneview-api"},
 		{FromID: "app-api-gw", ToID: "app-user-auth", Relationship: "depends_on", Description: "api-gateway validates all requests via user-auth"},
 
 		// Search service dependencies
-		{FromID: "app-search", ToID: "app-catalog", Relationship: "depends_on", Description: "search indexes product catalog data"},
+		{FromID: "app-search", ToID: "app-oneview", Relationship: "depends_on", Description: "search indexes infrastructure inventory data"},
 
 		// ── Application → User Group (application serves users) ─────────
-		// Payment service consumers
-		{FromID: "app-payment", ToID: "ug-online-shoppers", Relationship: "serves", Description: "payment-service processes web checkout payments"},
-		{FromID: "app-payment", ToID: "ug-mobile-users", Relationship: "serves", Description: "payment-service processes mobile app payments"},
+		// GreenLake portal consumers
+		{FromID: "app-greenlake", ToID: "ug-greenlake-tenants", Relationship: "serves", Description: "greenlake-portal serves cloud tenant management"},
+		{FromID: "app-greenlake", ToID: "ug-aruba-wifi-users", Relationship: "serves", Description: "greenlake-portal provides SSO for Aruba users"},
 
-		// Order service consumers
-		{FromID: "app-order", ToID: "ug-online-shoppers", Relationship: "serves", Description: "order-service manages web orders"},
-		{FromID: "app-order", ToID: "ug-mobile-users", Relationship: "serves", Description: "order-service manages mobile orders"},
+		// Aruba Central consumers
+		{FromID: "app-aruba", ToID: "ug-greenlake-tenants", Relationship: "serves", Description: "aruba-central manages tenant network infrastructure"},
+		{FromID: "app-aruba", ToID: "ug-aruba-wifi-users", Relationship: "serves", Description: "aruba-central provides Wi-Fi and SD-WAN management"},
 
-		// Checkout UI consumers
-		{FromID: "app-checkout", ToID: "ug-online-shoppers", Relationship: "serves", Description: "checkout-ui is the web checkout experience"},
+		// DSCC Console consumers
+		{FromID: "app-dscc", ToID: "ug-greenlake-tenants", Relationship: "serves", Description: "dscc-console provides storage management interface"},
 
 		// Web frontend consumers
-		{FromID: "app-web-frontend", ToID: "ug-online-shoppers", Relationship: "serves", Description: "web-frontend serves the main website"},
-		{FromID: "app-web-frontend", ToID: "ug-internal-ops", Relationship: "serves", Description: "web-frontend includes internal ops dashboard"},
+		{FromID: "app-web-frontend", ToID: "ug-greenlake-tenants", Relationship: "serves", Description: "web-frontend serves the main management console"},
+		{FromID: "app-web-frontend", ToID: "ug-hpe-ops-team", Relationship: "serves", Description: "web-frontend includes internal ops dashboard"},
 
 		// API gateway consumers
-		{FromID: "app-api-gw", ToID: "ug-api-partners", Relationship: "serves", Description: "api-gateway exposes public APIs to partners"},
-		{FromID: "app-api-gw", ToID: "ug-mobile-users", Relationship: "serves", Description: "api-gateway serves mobile app API calls"},
+		{FromID: "app-api-gw", ToID: "ug-api-integrations", Relationship: "serves", Description: "api-gateway exposes public APIs to integration partners"},
+		{FromID: "app-api-gw", ToID: "ug-aruba-wifi-users", Relationship: "serves", Description: "api-gateway serves Aruba network API calls"},
 
-		// Catalog consumers
-		{FromID: "app-catalog", ToID: "ug-online-shoppers", Relationship: "serves", Description: "product-catalog powers product browsing"},
-		{FromID: "app-catalog", ToID: "ug-mobile-users", Relationship: "serves", Description: "product-catalog serves mobile product listings"},
+		// OneView consumers
+		{FromID: "app-oneview", ToID: "ug-greenlake-tenants", Relationship: "serves", Description: "oneview-api provides server hardware management"},
+		{FromID: "app-oneview", ToID: "ug-aruba-wifi-users", Relationship: "serves", Description: "oneview-api serves infrastructure inventory to network users"},
 
 		// Monitoring consumers
-		{FromID: "app-monitoring", ToID: "ug-internal-ops", Relationship: "serves", Description: "monitoring-stack provides dashboards to SRE/ops team"},
+		{FromID: "app-monitoring", ToID: "ug-hpe-ops-team", Relationship: "serves", Description: "monitoring-stack provides dashboards to HPE SRE/ops team"},
 	}
 }

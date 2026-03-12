@@ -61,8 +61,8 @@ func GetIncidents() []opsramp.Incident {
 		},
 		{
 			ID:          "INC-20260219-003",
-			Subject:     "Payment service pod crash loop in GCP Kubernetes cluster",
-			Description: "The payment-service pod on k8s-node-04 has been in CrashLoopBackOff for 2+ hours. Last exit code 137 indicates OOMKilled. The pod memory limit is set to 512Mi but the service appears to need more after the recent v2.3.1 deployment. Rolling back to v2.3.0 has been proposed.",
+			Subject:     "GreenLake portal pod crash loop in HPE GreenLake Kubernetes cluster",
+			Description: "The greenlake-portal pod on k8s-node-04 has been in CrashLoopBackOff for 2+ hours. Last exit code 137 indicates OOMKilled. The pod memory limit is set to 512Mi but the service appears to need more after the recent v2.3.1 deployment. Rolling back to v2.3.0 has been proposed.",
 			Status:      "Open",
 			SubStatus:   "Investigation",
 			Priority:    "Urgent",

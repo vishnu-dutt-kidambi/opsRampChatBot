@@ -262,6 +262,8 @@ func matchesAlertQuery(a Alert, query string) bool {
 	q := strings.ToLower(query)
 	return containsIgnoreCase(a.Subject, q) ||
 		containsIgnoreCase(a.Description, q) ||
+		containsIgnoreCase(a.CurrentState, q) ||
+		containsIgnoreCase(a.Priority, q) ||
 		containsIgnoreCase(a.ServiceName, q) ||
 		containsIgnoreCase(a.ProblemArea, q) ||
 		containsIgnoreCase(a.Component, q) ||

@@ -80,18 +80,18 @@ func GetToolDefinitions() []Tool {
 			Type: "function",
 			Function: ToolFunction{
 				Name:        "search_resources",
-				Description: "Search and filter monitored infrastructure resources. Use this to find servers, databases, containers, cloud resources by cloud provider (AWS/Azure/GCP/OnPrem), region, resource type (Linux/Windows/Azure SQL Database), environment tag (production/staging), role tag (web/app/database/k8s-worker), or free-text search.",
+				Description: "Search and filter monitored infrastructure resources. Use this to find servers, databases, containers, cloud resources by cloud provider (AWS/Azure/GCP/HPE GreenLake/OnPrem), region, resource type (Linux/Windows/Azure SQL Database), environment tag (production/staging), role tag (web/app/database/k8s-worker), or free-text search.",
 				Parameters: ToolParameters{
 					Type: "object",
 					Properties: map[string]ToolProperty{
 						"cloud": {
 							Type:        "string",
-							Description: "Filter by cloud provider",
-							Enum:        []string{"AWS", "Azure", "GCP", "OnPrem"},
+							Description: "Filter by cloud provider (HPE GreenLake = HPE-managed datacenter with Juniper switches)",
+							Enum:        []string{"AWS", "Azure", "GCP", "HPE GreenLake", "OnPrem"},
 						},
 						"region": {
 							Type:        "string",
-							Description: "Filter by region (e.g., us-east-1, eastus, us-central1, datacenter-east)",
+							Description: "Filter by region (e.g., us-east-1, eastus, hpe-dc-east, datacenter-east)",
 						},
 						"type": {
 							Type:        "string",
@@ -227,13 +227,13 @@ func GetToolDefinitions() []Tool {
 			Type: "function",
 			Function: ToolFunction{
 				Name:        "correlate_network",
-				Description: "Correlate a server or application issue with Juniper network switch telemetry. Given a server name, application name, or IP, this tool looks up the connected Juniper switch port and analyzes its telemetry (packet loss, CRC errors, link flaps, latency, jitter, duplex mismatch) to determine if the root cause is network-related. Accepts application names like 'payment-service' which are automatically resolved to the hosting server. Use this when investigating performance issues, latency problems, or connectivity issues. Returns switch port stats along with an analysis verdict.",
+				Description: "Correlate a server or application issue with Juniper network switch telemetry. Given a server name, application name, or IP, this tool looks up the connected Juniper switch port and analyzes its telemetry (packet loss, CRC errors, link flaps, latency, jitter, duplex mismatch) to determine if the root cause is network-related. Accepts application names like 'greenlake-portal' which are automatically resolved to the hosting server. Use this when investigating performance issues, latency problems, or connectivity issues. Returns switch port stats along with an analysis verdict.",
 				Parameters: ToolParameters{
 					Type: "object",
 					Properties: map[string]ToolProperty{
 						"resource_name": {
 							Type:        "string",
-							Description: "The name of the server, application, or IP address to correlate with network telemetry. Application names (e.g., 'payment-service') are automatically resolved to their hosting server.",
+							Description: "The name of the server, application, or IP address to correlate with network telemetry. Application names (e.g., 'greenlake-portal') are automatically resolved to their hosting server.",
 						},
 					},
 					Required: []string{"resource_name"},
@@ -244,13 +244,13 @@ func GetToolDefinitions() []Tool {
 			Type: "function",
 			Function: ToolFunction{
 				Name:        "blast_radius",
-				Description: "Analyze the blast radius of an infrastructure issue. Given a server or application name, this tool traverses the dependency graph (server → applications → downstream services → user groups) to determine how many applications, services, and end-users are affected. Accepts application names like 'payment-service' which are automatically resolved to the hosting server. Use this after correlate_network confirms a network issue, or after investigate_resource reveals a problem, to understand the full scope and business impact of the incident.",
+				Description: "Analyze the blast radius of an infrastructure issue. Given a server or application name, this tool traverses the dependency graph (server → applications → downstream services → user groups) to determine how many applications, services, and end-users are affected. Accepts application names like 'greenlake-portal' which are automatically resolved to the hosting server. Use this after correlate_network confirms a network issue, or after investigate_resource reveals a problem, to understand the full scope and business impact of the incident.",
 				Parameters: ToolParameters{
 					Type: "object",
 					Properties: map[string]ToolProperty{
 						"resource_name": {
 							Type:        "string",
-							Description: "The name of the server, application, or IP address to analyze blast radius for. Application names (e.g., 'payment-service') are automatically resolved to their hosting server.",
+							Description: "The name of the server, application, or IP address to analyze blast radius for. Application names (e.g., 'greenlake-portal') are automatically resolved to their hosting server.",
 						},
 					},
 					Required: []string{"resource_name"},
@@ -261,13 +261,13 @@ func GetToolDefinitions() []Tool {
 			Type: "function",
 			Function: ToolFunction{
 				Name:        "get_remediation_plan",
-				Description: "Generate a step-by-step guided remediation plan for a resource with network issues. Given a server or application name, this tool correlates with the Juniper switch, identifies the specific issues, and produces an ordered list of remediation steps with exact CLI commands, risk levels, and approval requirements. Accepts application names like 'payment-service' which are automatically resolved to the hosting server. Use this when the root cause is confirmed and you need to propose a fix.",
+				Description: "Generate a step-by-step guided remediation plan for a resource with network issues. Given a server or application name, this tool correlates with the Juniper switch, identifies the specific issues, and produces an ordered list of remediation steps with exact CLI commands, risk levels, and approval requirements. Accepts application names like 'greenlake-portal' which are automatically resolved to the hosting server. Use this when the root cause is confirmed and you need to propose a fix.",
 				Parameters: ToolParameters{
 					Type: "object",
 					Properties: map[string]ToolProperty{
 						"resource_name": {
 							Type:        "string",
-							Description: "The name of the server, application, or IP address to generate remediation steps for. Application names (e.g., 'payment-service') are automatically resolved to their hosting server.",
+							Description: "The name of the server, application, or IP address to generate remediation steps for. Application names (e.g., 'greenlake-portal') are automatically resolved to their hosting server.",
 						},
 					},
 					Required: []string{"resource_name"},

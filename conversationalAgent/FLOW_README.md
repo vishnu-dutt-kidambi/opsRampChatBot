@@ -1,4 +1,4 @@
-# OpsRamp ChatBot — Flow Documentation
+# HPE ChatBot — Flow Documentation
 
 > **Generated:** March 10, 2026
 > **Model:** Configurable — default `llama3.1`; native Mac setup installs `mistral` (set `LLM_MODEL` env var to override)
@@ -25,7 +25,7 @@
 14. [Flow 12: Correlate Network (Juniper)](#14-flow-12-correlate-network-juniper)
 15. [Flow 13: Blast Radius Analysis](#15-flow-13-blast-radius-analysis)
 16. [Flow 14: Guided Remediation](#16-flow-14-guided-remediation)
-17. [Flow 15: End-to-End — "Why is the payment app slow?"](#17-flow-15-end-to-end--why-is-the-payment-app-slow)
+17. [Flow 15: End-to-End — "Why is the GreenLake portal slow?"](#17-flow-15-end-to-end--why-is-the-greenlake-portal-slow)
 18. [Ollama API Request/Response Format](#18-ollama-api-requestresponse-format)
 19. [Testing Reference — All Captured Responses](#19-testing-reference--all-captured-responses)
 
@@ -141,7 +141,7 @@ The browser chat UI (`--web` mode) shows a welcome screen with 11 quick-click bu
 | 🔌 Network correlation | "Correlate network for k8s-node-04" |
 | 💥 Blast radius | "What is the blast radius for k8s-node-04?" |
 | 🛠️ Remediation plan | "Give me a remediation plan for k8s-node-04" |
-| 🚀 End-to-end investigation | "Why is the payment app slow?" |
+| 🚀 End-to-end investigation | "Why is the GreenLake portal slow?" |
 
 ---
 
@@ -167,7 +167,7 @@ reqBody := chatRequest{
 ```
 
 The **system prompt** (first message, role=system) tells the LLM:
-- Its identity (OpsRamp Operations Assistant)
+- Its identity (HPE Operations Assistant)
 - How to handle meta questions without tools
 - Rules for tool usage (never fabricate data, always use tools for real queries)
 - How to format answers after receiving tool results
@@ -197,7 +197,7 @@ The **tools array** contains JSON Schema definitions for all 11 tools. Ollama se
 {
   "message": {
     "role": "assistant",
-    "content": "I'm an OpsRamp Operations Assistant. Here's what I can help you with..."
+    "content": "I'm an HPE Operations Assistant. I have 10 capabilities spanning monitoring, network analysis, and guided remediation..."
   }
 }
 ```
@@ -338,9 +338,9 @@ Based on the tool output, here are all critical alerts:
   ticketed yet.
 • PING failed for monitoring-agent-staging-01: This alert has been active for
   50 minutes. The resource is on-premises and is not acknowledged or ticketed yet.
-• Container restart loop detected on payment-service pod: This alert has been
+• Container restart loop detected on greenlake-portal pod: This alert has been
   active for 2 hours and 5 minutes, with a priority of P0 (High). The resource
-  is in GCP.
+  is on HPE GreenLake.
 
 I recommend checking the resources immediately to prevent any further issues. You
 may also want to create tickets for db-primary-01 and monitoring-agent-staging-01
@@ -353,7 +353,7 @@ as they are not yet ticketed.
 
 ### User Query Examples
 - "List all resources running in AWS"
-- "Show me servers in GCP us-central1"
+- "Show HPE GreenLake servers"
 - "What do we have in production?"
 - "Show servers in critical state"
 
@@ -540,7 +540,7 @@ Here are the open incidents:
 * INC-20260219-002: Database disk space critical - db-primary-01 at 92%
   + Status: Open, Waiting for Approval
   + Priority: Urgent (SLA Resolution Breach)
-* INC-20260219-003: Payment service pod crash loop in GCP Kubernetes cluster
+* INC-20260219-003: GreenLake portal pod crash loop in HPE GreenLake Kubernetes cluster
   + Status: Open, Investigation
   + Priority: Urgent
 * INC-20260219-004: Staging server unreachable - monitoring-agent-staging-01
@@ -688,7 +688,7 @@ Based on the environment summary, here's a breakdown of your infrastructure:
 Cloud Breakdown:
 * AWS: 10 resources
 * Azure: 3 resources
-* GCP: 5 resources
+* HPE GreenLake: 5 resources
 * OnPrem: 4 resources
 ```
 
@@ -1325,8 +1325,8 @@ agent.executeTool() → tools.ExecuteWithOptions()
   ▼
 executeCorrelateNetwork(juniperClient, {"resource_name": "k8s-node-04"})
   → juniperClient.CorrelateNetwork("k8s-node-04")
-    → findMapping("k8s-node-04") → {SwitchID: "sw-gcp-central-01", PortID: "ge-0/0/5"}
-    → getSwitchByID("sw-gcp-central-01") → sw-gcp-central-01 (Juniper EX4300-48T)
+    → findMapping("k8s-node-04") → {SwitchID: "sw-dc-east-04", PortID: "ge-0/0/5"}
+    → getSwitchByID("sw-dc-east-04") → sw-dc-east-04 (Juniper EX4300-48T)
     → getSwitchPort(sw, "ge-0/0/5") → port with 8.3% packet loss, 156789 rx_errors
     → analyzePortIssues(port, mapping) → 5 issues detected:
         • packet_loss: 8.3% (critical, threshold: 1.0%)
@@ -1343,7 +1343,7 @@ callLLM() called again
   │
   ▼
 Ollama reads JSON, generates human summary:
-  "Network correlation reveals significant issues on sw-gcp-central-01 port ge-0/0/5:
+  "Network correlation reveals significant issues on sw-dc-east-04 port ge-0/0/5:
    - 8.3% packet loss (critical)
    - 156,789 RX errors
    - Link flapping (last flap 12 minutes ago)
@@ -1395,25 +1395,25 @@ agent.executeTool() → tools.ExecuteWithOptions()
 executeBlastRadius(juniperClient, {"resource_name": "k8s-node-04"})
   → juniperClient.AnalyzeBlastRadius("k8s-node-04")
     → Find start node: k8s-node-04 (server, compute layer)
-    → Find switch mapping: sw-gcp-central-01 ge-0/0/5
+    → Find switch mapping: sw-dc-east-04 ge-0/0/5
     → BFS traversal of dependency graph:
-        k8s-node-04 ──hosts──→ payment-service (critical)
-        k8s-node-04 ──hosts──→ order-service (high)
-        k8s-node-04 ──hosts──→ checkout-ui (high)
-        checkout-ui  ──depends_on── payment-service (already visited)
-        checkout-ui  ──depends_on── order-service (already visited)
-        payment-service ──serves──→ online-shoppers (3000 users)
-        payment-service ──serves──→ mobile-app-users (2000 users)
-        order-service ──serves──→ online-shoppers (already visited)
-        checkout-ui ──serves──→ online-shoppers (already visited)
+        k8s-node-04 ──hosts──→ greenlake-portal (critical)
+        k8s-node-04 ──hosts──→ aruba-central (high)
+        k8s-node-04 ──hosts──→ dscc-console (high)
+        dscc-console  ──depends_on── greenlake-portal (already visited)
+        dscc-console  ──depends_on── aruba-central (already visited)
+        greenlake-portal ──serves──→ greenlake-tenants (3000 users)
+        greenlake-portal ──serves──→ aruba-wifi-users (2000 users)
+        aruba-central ──serves──→ greenlake-tenants (already visited)
+        dscc-console ──serves──→ greenlake-tenants (already visited)
     → Result:
-        Affected applications: 3 (payment-service, order-service, checkout-ui)
-        Affected users: 5000 (online-shoppers: 3000 + mobile-app-users: 2000)
+        Affected applications: 3 (greenlake-portal, aruba-central, dscc-console)
+        Affected users: 5000 (greenlake-tenants: 3000 + aruba-wifi-users: 2000)
         Severity: critical
         Business impact: "3 application(s) and approximately 5000 users affected.
           This is a HIGH-IMPACT incident affecting customer-facing services.
           Revenue-generating services are impacted — immediate escalation recommended."
-        Critical path: k8s-node-04 → payment-service → online-shoppers
+        Critical path: k8s-node-04 → greenlake-portal → greenlake-tenants
   │
   ▼
 Tool result appended to history as role="tool"
@@ -1422,17 +1422,17 @@ callLLM() called again
   ▼
 Ollama reads JSON, generates human summary:
   "Blast radius analysis for k8s-node-04 reveals a HIGH-IMPACT incident:
-   - Root cause: Network issues on sw-gcp-central-01 port ge-0/0/5
-   - 3 applications affected: payment-service, order-service, checkout-ui
-   - ~5,000 end users impacted (3,000 online shoppers + 2,000 mobile users)
+   - Root cause: Network issues on sw-dc-east-04 port ge-0/0/5
+   - 3 applications affected: greenlake-portal, aruba-central, dscc-console
+   - ~5,000 end users impacted (3,000 GreenLake tenants + 2,000 Aruba WiFi users)
    - Revenue-generating services are at risk
-   - Critical path: k8s-node-04 → payment-service → online-shoppers
+   - Critical path: k8s-node-04 → greenlake-portal → greenlake-tenants
    Immediate escalation recommended."
 ```
 
 ### Dependency Graph Traversal
 ```
-             sw-gcp-central-01 (ge-0/0/5)
+             sw-dc-east-04 (ge-0/0/5)
                      │ connects_to
                      ▼
               ┌─ k8s-node-04 ─┐
@@ -1440,15 +1440,15 @@ Ollama reads JSON, generates human summary:
          hosts│               │hosts
               ▼               ▼
    ┌─────────────┐   ┌──────────────┐   ┌──────────┐
-   │ payment-    │   │ order-       │   │ checkout- │
-   │ service     │   │ service      │   │ ui        │
-   │ (critical)  │   │ (high)       │   │ (high)    │
+   │ greenlake-  │   │ aruba-       │   │ dscc-    │
+   │ portal      │   │ central      │   │ console  │
+   │ (critical)  │   │ (high)       │   │ (high)   │
    └──────┬──────┘   └──────┬───────┘   └──────┬────┘
           │ serves           │ serves           │ serves
           ▼                  ▼                  ▼
    ┌──────────────┐  ┌──────────────┐
-   │ online-      │  │ mobile-app-  │
-   │ shoppers     │  │ users        │
+   │ greenlake-   │  │ aruba-wifi-  │
+   │ tenants      │  │ users        │
    │ (3000 users) │  │ (2000 users) │
    └──────────────┘  └──────────────┘
          Total affected: ~5,000 users
@@ -1482,7 +1482,7 @@ agent.executeTool() → tools.ExecuteWithOptions()
 executeGetRemediationPlan(juniperClient, {"resource_name": "k8s-node-04"})
   → juniperClient.GetRemediationPlan("k8s-node-04")
     → CorrelateNetwork("k8s-node-04") → 5 issues (packet_loss, rx_errors, link_flap, speed_downgrade, duplex_mismatch)
-    → findMapping("k8s-node-04") → {SwitchID: "sw-gcp-central-01", PortID: "ge-0/0/5"}
+    → findMapping("k8s-node-04") → {SwitchID: "sw-dc-east-04", PortID: "ge-0/0/5"}
     → Generate remediation steps:
         Step 1: [diagnostic] show interfaces ge-0/0/5 extensive
         Step 2: [diagnostic] show interfaces diagnostics optics ge-0/0/5
@@ -1492,7 +1492,7 @@ executeGetRemediationPlan(juniperClient, {"resource_name": "k8s-node-04"})
         Step 6: [resolution] Force 1Gbps full-duplex ⚠️ REQUIRES APPROVAL
         Step 7: [verification] Check port status
         Step 8: [verification] Check application health
-    → PlanID: REM-sw-gcp-central-01-ge-0/0/5
+    → PlanID: REM-sw-dc-east-04-ge-0/0/5
     → Urgency: immediate
     → Risk: medium
     → Rollback available: yes
@@ -1517,44 +1517,44 @@ Ollama presents step-by-step plan to user with approval gates highlighted
 ### Example Remediation Output (k8s-node-04)
 
 ```
-Plan: REM-sw-gcp-central-01-ge-0/0/5
-Title: Remediate network issues on sw-gcp-central-01 port ge-0/0/5 (connected to k8s-node-04)
+Plan: REM-sw-dc-east-04-ge-0/0/5
+Title: Remediate network issues on sw-dc-east-04 port ge-0/0/5 (connected to k8s-node-04)
 Urgency: IMMEDIATE | Risk: MEDIUM | Approval Required: YES
 
 Step 1 [diagnostic] — 10s
   Action: Run diagnostics on the affected switch port
   Command: show interfaces ge-0/0/5 extensive
-  Target: sw-gcp-central-01
+  Target: sw-dc-east-04
 
 Step 2 [diagnostic] — 10s
   Action: Check interface error counters and optics
   Command: show interfaces diagnostics optics ge-0/0/5
-  Target: sw-gcp-central-01
+  Target: sw-dc-east-04
 
 Step 3 [mitigation] — 30s ⚠️ APPROVAL REQUIRED
   Action: Bounce the interface to clear link flap state
   Command: set interfaces ge-0/0/5 disable → commit → delete → commit
-  Target: sw-gcp-central-01
+  Target: sw-dc-east-04
   Risk: MEDIUM
 
 Step 4 [diagnostic] — 5s
   Action: Clear interface error counters
   Command: clear interfaces statistics ge-0/0/5
-  Target: sw-gcp-central-01
+  Target: sw-dc-east-04
 
 Step 5 [resolution] — 2min ⚠️ APPROVAL REQUIRED
   Action: Check physical cable connectivity
-  Target: sw-gcp-central-01 ↔ k8s-node-04
+  Target: sw-dc-east-04 ↔ k8s-node-04
 
 Step 6 [resolution] — 30s ⚠️ APPROVAL REQUIRED
   Action: Force port speed and duplex to 1000Mbps full-duplex
   Command: set interfaces ge-0/0/5 speed 1g + link-mode full-duplex → commit
-  Target: sw-gcp-central-01
+  Target: sw-dc-east-04
 
 Step 7 [verification] — 10s
   Action: Verify remediation
   Command: show interfaces ge-0/0/5 extensive | match "errors|loss|flap|speed|duplex"
-  Target: sw-gcp-central-01
+  Target: sw-dc-east-04
 
 Step 8 [verification] — 10s
   Action: Verify application health on k8s-node-04
@@ -1566,27 +1566,27 @@ Rollback: If remediation fails, restore port ge-0/0/5 config from backup.
 
 ---
 
-## 17. Flow 15: End-to-End — "Why is the payment app slow?"
+## 17. Flow 15: End-to-End — "Why is the GreenLake portal slow?"
 
 ### The Showcase Scenario
 
 This is the flagship demo flow showing autonomous multi-tool reasoning. The agent chains **6 tool calls** across different domains to go from a vague user question to an actionable remediation plan.
 
 ### User Query
-"Why is the payment app slow?"
+"Why is the GreenLake portal slow?"
 
 ### Flow Diagram (6 Rounds of Autonomous Reasoning)
 
 ```
-User: "Why is the payment app slow?"
+User: "Why is the GreenLake portal slow?"
   │
   ▼
 ═══════════════════════════════════════════════════════════════
-ROUND 1: Search for alerts related to the payment app
+ROUND 1: Search for alerts related to the GreenLake portal
 ═══════════════════════════════════════════════════════════════
   │
   ▼
-LLM decides: call search_alerts(query="payment")
+LLM decides: call search_alerts(query="greenlake")
   → Finds: ALR-20260219-009 — "HTTP response latency exceeding thresholds"
      - Resource: k8s-node-04, P1 priority, Critical state
      - Metric: http_response_time_ms Avg:2847ms P99:4200ms
@@ -1613,7 +1613,7 @@ ROUND 3: Correlate with network telemetry (Juniper switch)
   │
   ▼
 LLM decides: call correlate_network(resource_name="k8s-node-04")
-  → Switch: sw-gcp-central-01, Port: ge-0/0/5
+  → Switch: sw-dc-east-04, Port: ge-0/0/5
   → NETWORK IS THE LIKELY ROOT CAUSE:
      - 8.3% packet loss (critical)
      - 156,789 RX errors
@@ -1629,12 +1629,12 @@ ROUND 4: Map the blast radius — who's affected?
   ▼
 LLM decides: call blast_radius(resource_name="k8s-node-04")
   → 3 applications affected:
-     - payment-service (critical)
-     - order-service (high)
-     - checkout-ui (high)
+     - greenlake-portal (critical)
+     - aruba-central (high)
+     - dscc-console (high)
   → ~5,000 users affected:
-     - online-shoppers: 3,000
-     - mobile-app-users: 2,000
+     - greenlake-tenants: 3,000
+     - aruba-wifi-users: 2,000
   → Business impact: HIGH — revenue-generating services impacted
   │
   ▼
@@ -1669,24 +1669,24 @@ FINAL ANSWER: Agent synthesizes everything into a comprehensive response
 
 Agent response (synthesized from 6 tool calls):
 
-"The payment app slowness is caused by a NETWORK issue, not a server problem.
+"The GreenLake portal slowness is caused by a NETWORK issue, not a server problem.
 
 **Root Cause:**
-The Juniper switch sw-gcp-central-01, port ge-0/0/5 connected to k8s-node-04 has:
+The Juniper switch sw-dc-east-04, port ge-0/0/5 connected to k8s-node-04 has:
 - 8.3% packet loss
 - 156,789 RX errors
 - Speed downgraded to 100Mbps (should be 1Gbps)
 - Half-duplex mismatch + link flapping
 
 **Blast Radius:**
-- 3 applications affected: payment-service, order-service, checkout-ui
-- ~5,000 end users impacted (3,000 online shoppers + 2,000 mobile users)
+- 3 applications affected: greenlake-portal, aruba-central, dscc-console
+- ~5,000 end users impacted (3,000 GreenLake tenants + 2,000 Aruba WiFi users)
 - Revenue-generating services at risk — immediate action needed
 
-**Recommended Fix (Plan: REM-sw-gcp-central-01-ge-0/0/5):**
+**Recommended Fix (Plan: REM-sw-dc-east-04-ge-0/0/5):**
 1. Run diagnostics: show interfaces ge-0/0/5 extensive
 2. Bounce the interface (⚠️ requires approval — 30sec outage)
-3. Reseat cable between sw-gcp-central-01 and k8s-node-04
+3. Reseat cable between sw-dc-east-04 and k8s-node-04
 4. Force 1Gbps full-duplex configuration
 5. Verify port status and application health
 
@@ -1714,7 +1714,7 @@ Shall I proceed with step 1 (diagnostics)?"
 {
   "model": "llama3.1",              // or "mistral" — set via LLM_MODEL env var
   "messages": [
-    {"role": "system", "content": "You are an OpsRamp Operations Assistant..."},
+    {"role": "system", "content": "You are an HPE Operations Assistant..."},
     {"role": "user", "content": "Show me all critical alerts"}
   ],
   "tools": [
@@ -1820,7 +1820,7 @@ curl -s http://localhost:8080/api/chat \
   -d '{"message":"Show me all critical alerts"}'
 ```
 **Tool called:** `search_alerts(state="Critical")`
-**Expected:** 4 critical alerts (web-server-prod-01 CPU, db-primary-01 disk, monitoring-agent-staging-01 PING, payment-service pod crash loop)
+**Expected:** 4 critical alerts (web-server-prod-01 CPU, db-primary-01 disk, monitoring-agent-staging-01 PING, greenlake-portal pod crash loop)
 
 ### Test Case 2: AWS Resources
 ```bash
@@ -1856,7 +1856,7 @@ curl -s http://localhost:8080/api/chat \
   -d '{"message":"Give me an environment summary"}'
 ```
 **Tool called:** `get_environment_summary()`
-**Expected:** 22 resources, 8 alerts (4 critical, 4 warning), 5 open incidents, cloud breakdown (AWS:10, GCP:5, Azure:3, OnPrem:4)
+**Expected:** 22 resources, 8 alerts (4 critical, 4 warning), 5 open incidents, cloud breakdown (AWS:10, HPE GreenLake:5, Azure:3, OnPrem:4)
 
 ### Test Case 6: Single Resource Capacity Forecast
 ```bash
@@ -1925,7 +1925,7 @@ curl -s http://localhost:8080/api/chat \
   -d '{"message":"Correlate network for k8s-node-04"}'
 ```
 **Tool called:** `correlate_network(resource_name="k8s-node-04")`
-**Expected:** sw-gcp-central-01, ge-0/0/5, 8.3% packet loss, 156789 RX errors, "NETWORK IS THE LIKELY ROOT CAUSE"
+**Expected:** sw-dc-east-04, ge-0/0/5, 8.3% packet loss, 156789 RX errors, "NETWORK IS THE LIKELY ROOT CAUSE"
 
 ---
 
@@ -1936,7 +1936,7 @@ curl -s http://localhost:8080/api/chat \
   -d '{"message":"What is the blast radius for k8s-node-04?"}'
 ```
 **Tool called:** `blast_radius(resource_name="k8s-node-04")`
-**Expected:** 3 affected applications (payment-service, order-service, checkout-ui), ~5000 users, critical severity
+**Expected:** 3 affected applications (greenlake-portal, aruba-central, dscc-console), ~5000 users, critical severity
 
 ---
 
@@ -1955,10 +1955,10 @@ curl -s http://localhost:8080/api/chat \
 ```bash
 curl -s http://localhost:8080/api/chat \
   -H 'Content-Type: application/json' \
-  -d '{"message":"Why is the payment app slow?"}'
+  -d '{"message":"Why is the GreenLake portal slow?"}'
 ```
 **Tool called:** Multiple — search_alerts → investigate_resource → correlate_network → blast_radius → search_knowledge_base → get_remediation_plan (up to 6 rounds)
-**Expected:** Identifies network root cause on sw-gcp-central-01, 3 apps + 5000 users affected, remediation plan with Junos commands
+**Expected:** Identifies network root cause on sw-dc-east-04, 3 apps + 5000 users affected, remediation plan with Junos commands
 
 ---
 
@@ -2011,7 +2011,7 @@ test_query "Capacity Forecast" "Predict capacity for web-server-prod-01" "Alread
 test_query "At-Risk Resources" "Which resources are at risk?" "web-server-prod-01"
 test_query "Resource Details" "Show me details of db-primary-01" "10.0.2.10"
 test_query "Network Correlation" "Correlate network for k8s-node-04" "packet_loss"
-test_query "Blast Radius" "What is the blast radius for k8s-node-04?" "payment-service"
+test_query "Blast Radius" "What is the blast radius for k8s-node-04?" "greenlake-portal"
 test_query "Remediation Plan" "Give me a remediation plan for k8s-node-04" "ge-0/0/5"
 
 echo ""

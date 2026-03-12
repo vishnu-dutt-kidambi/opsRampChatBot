@@ -47,7 +47,7 @@ func (c *Client) SetDependencyGraph(nodes []DependencyNode, edges []DependencyEd
 // and determines if network issues are the likely root cause of server problems.
 //
 // Accepts both server names (e.g., "k8s-node-04") and application names
-// (e.g., "payment-service"). Application names are automatically resolved to
+// (e.g., "greenlake-portal"). Application names are automatically resolved to
 // their hosting server via the dependency graph.
 //
 // This is the primary tool for the "Correlate Network" feature in the agent pipeline:
@@ -186,7 +186,7 @@ func (c *Client) GetSwitchPortStats(switchName string) []SwitchPort {
 // AnalyzeBlastRadius computes the blast radius from a resource name or switch port.
 // It finds all downstream dependencies and affected user groups.
 // Accepts both server names (e.g., "k8s-node-04") and application names
-// (e.g., "payment-service"). Application names are resolved to their hosting server.
+// (e.g., "greenlake-portal"). Application names are resolved to their hosting server.
 func (c *Client) AnalyzeBlastRadius(resourceNameOrIP string) *BlastRadiusResult {
 	if len(c.Nodes) == 0 || len(c.Edges) == 0 {
 		return nil
@@ -443,7 +443,7 @@ func buildBusinessImpact(appCount, userCount int, impacted []ImpactedNode) strin
 
 // GetRemediationPlan generates a remediation plan for a resource with network issues.
 // Accepts both server names (e.g., "k8s-node-04") and application names
-// (e.g., "payment-service"). Application names are resolved to their hosting server.
+// (e.g., "greenlake-portal"). Application names are resolved to their hosting server.
 func (c *Client) GetRemediationPlan(resourceNameOrIP string) *RemediationPlan {
 	// Resolve application names to server names (CorrelateNetwork also resolves,
 	// but we need the resolved name for findMapping below)
@@ -677,7 +677,7 @@ func (c *Client) GetRemediationPlan(resourceNameOrIP string) *RemediationPlan {
 // If it matches an application, it follows the 'hosts' edge backwards to find the
 // server that runs that application and returns the server's name.
 // This allows correlate_network, blast_radius, and get_remediation_plan to accept
-// both server names and application names (e.g., "payment-service" → "k8s-node-04").
+// both server names and application names (e.g., "greenlake-portal" → "k8s-node-04").
 func (c *Client) resolveToServer(nameOrIP string) string {
 	// 1. Check if it directly matches a server in port mappings
 	if m := c.findMapping(nameOrIP); m != nil {
@@ -685,8 +685,8 @@ func (c *Client) resolveToServer(nameOrIP string) string {
 	}
 
 	// 2. Check if it matches an application node, then find the hosting server
-	//    Uses fuzzy matching so "payment app" resolves to "payment-service",
-	//    "order-service" matches "order-service", "checkout" matches "checkout-ui", etc.
+	//    Uses fuzzy matching so "greenlake portal" resolves to "greenlake-portal",
+	//    "aruba-central" matches "aruba-central", "dscc" matches "dscc-console", etc.
 	for _, node := range c.Nodes {
 		if node.Type != "application" {
 			continue
@@ -720,6 +720,16 @@ func (c *Client) resolveToServer(nameOrIP string) string {
 	return nameOrIP
 }
 
+// findMapping looks up the PortMapping entry that correlates an OpsRamp
+// resource to its Juniper switch port. It searches by IP address (primary
+// real-world key), hostname, or resource ID — whichever the caller provides.
+//
+// In production, the most reliable correlation attribute is the IP address
+// because both OpsRamp (via agent/discovery) and Juniper (via ARP/LLDP on
+// the switch port) independently observe the same IP for a given server.
+// The mapping data itself comes from GetNetworkPortMappings() in
+// mockdata/network.go, where each ResourceIP is deliberately kept in sync
+// with the IPAddress in mockdata/resources.go to mirror this behaviour.
 func (c *Client) findMapping(resourceNameOrIP string) *PortMapping {
 	q := strings.ToLower(resourceNameOrIP)
 	for _, m := range c.Mappings {
@@ -1025,8 +1035,8 @@ func containsIgnoreCase(s, substr string) bool {
 }
 
 // fuzzyMatchName does a flexible name match between a node name and a user query.
-// It handles variations like "payment app" matching "payment-service",
-// "order-service" matching "order service", "checkout" matching "checkout-ui", etc.
+// It handles variations like "greenlake portal" matching "greenlake-portal",
+// "aruba-central" matching "aruba central", "dscc" matching "dscc-console", etc.
 //
 // Matching strategy:
 //  1. Direct substring match (after normalizing separators)
@@ -1049,7 +1059,7 @@ func fuzzyMatchName(nodeName, query string) bool {
 	}
 
 	// Word-level match: check if any significant query word appears in the node name
-	// "payment app" → words ["payment", "app"] → "payment" (7 chars) matches "payment service"
+	// "greenlake portal" → words ["greenlake", "portal"] → "greenlake" (9 chars) matches "greenlake portal"
 	for _, word := range strings.Fields(qq) {
 		if len(word) >= 4 && strings.Contains(nn, word) {
 			return true
