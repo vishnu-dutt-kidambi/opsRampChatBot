@@ -14,10 +14,10 @@ import (
 // Network topology:
 //
 //   ┌──────────────────────────────────────────────────────────────────────┐
-//   │                    Datacenter East (AWS Direct Connect)             │
+//   │                    Datacenter East (HPE GreenLake + AWS)            │
 //   │                                                                    │
-//   │  sw-dc-east-01 (EX4600) — Web/App Tier                           │
-//   │    ge-0/0/1 → web-server-prod-01   (10.0.1.101)                  │
+//   │  sw-dc-east-01 (EX4600) — Web/App Tier (HPE ProLiant + AWS)      │
+//   │    ge-0/0/1 → web-server-prod-01   (10.0.1.101) ⚠ RX ERRORS+LOSS│
 //   │    ge-0/0/2 → app-server-prod-01   (10.0.1.102)                  │
 //   │    ge-0/0/3 → app-server-prod-02   (10.0.1.103) ⚠ RX ERRORS     │
 //   │    ge-0/0/4 → web-server-prod-02   (10.0.1.104)                  │
@@ -52,7 +52,7 @@ import (
 //   1. k8s-node-03 has a latency alert → switch port shows 4.7% packet loss
 //   2. k8s-node-04 runs greenlake-portal → switch port has link flaps
 //   3. app-server-prod-02 has memory alert → switch port shows RX errors
-//   4. web-server-prod-01 has CPU alert → switch port is clean (NOT network)
+//   4. web-server-prod-01 (HPE GreenLake) has CPU alert → switch port has RX errors + packet loss (compound incident)
 // =============================================================================
 
 // GetNetworkSwitches returns mock Juniper switch telemetry data.
@@ -79,19 +79,21 @@ func GetNetworkSwitches() []juniper.SwitchStats {
 			},
 			MemoryStat:  juniper.MemoryStat{Usage: 42.0},
 			Location:    "Datacenter East, Rack A1, U20",
-			Description: "Top-of-rack switch for web and application servers (AWS Direct Connect)",
+			Description: "Top-of-rack switch for HPE ProLiant web server and AWS application servers",
 			Ports: []juniper.SwitchPort{
-				// ge-0/0/1 → web-server-prod-01: CLEAN (high CPU is NOT network)
+				// ge-0/0/1 → web-server-prod-01: ⚠ RX ERRORS + PACKET LOSS
+				// Compound incident: CRC errors from a degrading cable cause
+				// retransmissions which spike CPU. Network IS a contributing factor.
 				{
 					PortID: "ge-0/0/1", PortMac: "5c:45:27:a9:65:81",
 					PortUsage: "lan", Active: true, Up: true, Disabled: false,
 					FullDuplex: true, Speed: 1000,
 					RxBytes: 8515104416, RxPkts: 57770567, RxBps: 850000000,
-					RxErrors: 0, RxBcastPkts: 1200, RxMcastPkts: 450,
+					RxErrors: 14872, RxBcastPkts: 1200, RxMcastPkts: 450,
 					TxBytes: 12021738968, TxPkts: 81220406, TxBps: 1200000000,
-					TxErrors: 0, TxBcastPkts: 800, TxMcastPkts: 300,
-					Jitter: 0.3, Latency: 0.5, Loss: 0.0,
-					LastFlapped: 0, // never flapped
+					TxErrors: 342, TxBcastPkts: 800, TxMcastPkts: 300,
+					Jitter: 6.8, Latency: 14.2, Loss: 1.9,
+					LastFlapped: 1741464600, // ~5 hours ago
 					MacCount:    1, MacLimit: 4096,
 					NeighborMac: "aa:bb:cc:01:01:01", NeighborPortDesc: "eth0",
 					NeighborSystemName: "web-server-prod-01",

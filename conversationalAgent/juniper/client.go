@@ -684,20 +684,15 @@ func (c *Client) resolveToServer(nameOrIP string) string {
 		return nameOrIP // already a server name/IP
 	}
 
-	// 2. Check if it matches an application node, then find the hosting server
-	//    Uses fuzzy matching so "greenlake portal" resolves to "greenlake-portal",
-	//    "aruba-central" matches "aruba-central", "dscc" matches "dscc-console", etc.
-	for _, node := range c.Nodes {
-		if node.Type != "application" {
-			continue
-		}
-		if !fuzzyMatchName(node.Name, nameOrIP) && !fuzzyMatchName(node.ID, nameOrIP) {
-			continue
-		}
-		// Found the application — now find which server hosts it via 'hosts' edges
+	// 2. Check if it matches an application node, then find the hosting server.
+	//    Two-pass approach: exact match first, then fuzzy match.
+	//    This prevents "greenlake-ops-portal" from fuzzy-matching "greenlake-portal"
+	//    when an exact match exists.
+
+	// resolveAppToServer finds the hosting server for a matched application node.
+	resolveAppToServer := func(node DependencyNode) string {
 		for _, edge := range c.Edges {
 			if edge.ToID == node.ID && edge.Relationship == "hosts" {
-				// edge.FromID is the server — find its name
 				for _, sn := range c.Nodes {
 					if sn.ID == edge.FromID && sn.Type == "server" {
 						fmt.Printf("  [resolve] Resolved application %q → server %q\n", nameOrIP, sn.Name)
@@ -705,6 +700,35 @@ func (c *Client) resolveToServer(nameOrIP string) string {
 					}
 				}
 			}
+		}
+		return ""
+	}
+
+	// Pass 1: Exact match (normalized names are equal)
+	normalized := strings.ToLower(strings.ReplaceAll(strings.ReplaceAll(nameOrIP, "-", " "), "_", " "))
+	for _, node := range c.Nodes {
+		if node.Type != "application" {
+			continue
+		}
+		nn := strings.ToLower(strings.ReplaceAll(strings.ReplaceAll(node.Name, "-", " "), "_", " "))
+		ni := strings.ToLower(strings.ReplaceAll(strings.ReplaceAll(node.ID, "-", " "), "_", " "))
+		if nn == normalized || ni == normalized {
+			if server := resolveAppToServer(node); server != "" {
+				return server
+			}
+		}
+	}
+
+	// Pass 2: Fuzzy match (fallback — substring/word matching)
+	for _, node := range c.Nodes {
+		if node.Type != "application" {
+			continue
+		}
+		if !fuzzyMatchName(node.Name, nameOrIP) && !fuzzyMatchName(node.ID, nameOrIP) {
+			continue
+		}
+		if server := resolveAppToServer(node); server != "" {
+			return server
 		}
 	}
 

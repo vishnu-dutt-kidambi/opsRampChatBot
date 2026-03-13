@@ -73,8 +73,8 @@ func GetDependencyNodes() []juniper.DependencyNode {
 		// ── Compute Layer (Servers) ─────────────────────────────────────
 		{
 			ID: "res-001", Name: "web-server-prod-01", Type: "server",
-			Layer: "compute", Cloud: "AWS", Region: "us-east-1", Criticality: "critical",
-			Metadata: map[string]string{"role": "web", "tier": "frontend"},
+			Layer: "compute", Cloud: "HPE GreenLake", Region: "hpe-dc-east", Criticality: "critical",
+			Metadata: map[string]string{"role": "web", "tier": "frontend", "hardware": "HPE ProLiant DL360"},
 		},
 		{
 			ID: "res-002", Name: "app-server-prod-01", Type: "server",
@@ -221,12 +221,12 @@ func GetDependencyNodes() []juniper.DependencyNode {
 			},
 		},
 		{
-			ID: "app-web-frontend", Name: "web-frontend", Type: "application",
+			ID: "app-web-frontend", Name: "greenlake-ops-portal", Type: "application",
 			Layer: "application", Criticality: "critical",
 			Metadata: map[string]string{
 				"port": "443", "protocol": "HTTPS",
 				"team":        "frontend",
-				"description": "Main HPE management console — dashboard, resource browsing, account management",
+				"description": "HPE GreenLake Operations Portal — unified dashboard for infrastructure monitoring, resource management, and operations",
 			},
 		},
 		{
@@ -323,8 +323,8 @@ func GetDependencyEdges() []juniper.DependencyEdge {
 		{FromID: "res-014", ToID: "app-monitoring", Relationship: "hosts", Description: "k8s-node-02 runs monitoring stack"},
 
 		// Web servers host frontend
-		{FromID: "res-001", ToID: "app-web-frontend", Relationship: "hosts", Description: "web-server-prod-01 serves web-frontend"},
-		{FromID: "res-004", ToID: "app-web-frontend", Relationship: "hosts", Description: "web-server-prod-02 serves web-frontend (HA)"},
+		{FromID: "res-001", ToID: "app-web-frontend", Relationship: "hosts", Description: "web-server-prod-01 serves greenlake-ops-portal"},
+		{FromID: "res-004", ToID: "app-web-frontend", Relationship: "hosts", Description: "web-server-prod-02 serves greenlake-ops-portal (HA)"},
 
 		// API gateway server hosts api-gateway app
 		{FromID: "res-010", ToID: "app-api-gw", Relationship: "hosts", Description: "api-gateway-prod runs api-gateway"},
@@ -343,7 +343,7 @@ func GetDependencyEdges() []juniper.DependencyEdge {
 		{FromID: "app-dscc", ToID: "app-oneview", Relationship: "depends_on", Description: "dscc-console fetches server inventory from oneview-api"},
 
 		// Web frontend dependencies
-		{FromID: "app-web-frontend", ToID: "app-api-gw", Relationship: "depends_on", Description: "web-frontend routes all API calls through gateway"},
+		{FromID: "app-web-frontend", ToID: "app-api-gw", Relationship: "depends_on", Description: "greenlake-ops-portal routes all API calls through gateway"},
 
 		// API gateway dependencies
 		{FromID: "app-api-gw", ToID: "app-dscc", Relationship: "depends_on", Description: "api-gateway routes /storage to dscc-console"},
@@ -366,8 +366,8 @@ func GetDependencyEdges() []juniper.DependencyEdge {
 		{FromID: "app-dscc", ToID: "ug-greenlake-tenants", Relationship: "serves", Description: "dscc-console provides storage management interface"},
 
 		// Web frontend consumers
-		{FromID: "app-web-frontend", ToID: "ug-greenlake-tenants", Relationship: "serves", Description: "web-frontend serves the main management console"},
-		{FromID: "app-web-frontend", ToID: "ug-hpe-ops-team", Relationship: "serves", Description: "web-frontend includes internal ops dashboard"},
+		{FromID: "app-web-frontend", ToID: "ug-greenlake-tenants", Relationship: "serves", Description: "greenlake-ops-portal serves the main management console"},
+		{FromID: "app-web-frontend", ToID: "ug-hpe-ops-team", Relationship: "serves", Description: "greenlake-ops-portal includes internal ops dashboard"},
 
 		// API gateway consumers
 		{FromID: "app-api-gw", ToID: "ug-api-integrations", Relationship: "serves", Description: "api-gateway exposes public APIs to integration partners"},

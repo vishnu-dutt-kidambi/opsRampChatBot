@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+mc#!/usr/bin/env python3
 """
 Generate HPE-branded PowerPoint presentation for HPE AI Autopilot demo.
 Uses standard HPE brand colors: HPE Green (#01A982), dark backgrounds, white text.

@@ -26,14 +26,14 @@ import (
 // This is the standard transport for tools like Claude Desktop and VS Code.
 func StartStdio(client *opsramp.Client, kb *knowledge.KnowledgeBase, jc ...*juniper.Client) error {
 	s := newMCPServer(client, kb, jc...)
-	log.Println("[MCP] Starting OpsRamp MCP Server on stdio...")
+	log.Println("[MCP] Starting HPE Autopilot MCP Server on stdio...")
 	return server.ServeStdio(s)
 }
 
 // StartHTTP starts the MCP server on an HTTP endpoint using Streamable HTTP transport.
 func StartHTTP(addr string, client *opsramp.Client, kb *knowledge.KnowledgeBase, jc ...*juniper.Client) error {
 	s := newMCPServer(client, kb, jc...)
-	log.Printf("[MCP] Starting OpsRamp MCP Server on %s ...\n", addr)
+	log.Printf("[MCP] Starting HPE Autopilot MCP Server on %s ...\n", addr)
 	httpServer := server.NewStreamableHTTPServer(s)
 	return httpServer.Start(addr)
 }
@@ -45,7 +45,7 @@ func newMCPServer(client *opsramp.Client, kb *knowledge.KnowledgeBase, jc ...*ju
 		juniperClient = jc[0]
 	}
 	s := server.NewMCPServer(
-		"opsRamp-mcp-server",
+		"hpe-autopilot-mcp-server",
 		"1.0.0",
 		server.WithToolCapabilities(false),
 		server.WithRecovery(),

@@ -242,6 +242,17 @@ func (a *Agent) Ask(question string) (string, error) {
 					continue
 				}
 
+				// For simple (non-investigation) queries, block chaining investigation tools.
+				// Allow the FIRST investigation tool, but block subsequent ones.
+				if !isInvestigationQuery(question) && isInvestigationTool(toolName) && countInvestigationTools(calledTools) > 1 {
+					fmt.Printf("  [agent] CHAIN blocked: %s — not an investigation query\n", toolName)
+					a.history = append(a.history, ChatMessage{
+						Role:    "tool",
+						Content: `{"skipped": true, "reason": "This is a simple query. Do NOT call additional investigation tools. Present the results you already have to the user now."}`,
+					})
+					continue
+				}
+
 				toolResult, err := a.executeTool(tc)
 				if err != nil {
 					toolResult = fmt.Sprintf(`{"error": "%s"}`, err.Error())
@@ -292,6 +303,20 @@ func (a *Agent) Ask(question string) (string, error) {
 				continue
 			}
 
+			// For simple (non-investigation) queries, block chaining investigation tools.
+			if !isInvestigationQuery(question) && isInvestigationTool(toolName) && countInvestigationTools(calledTools) > 1 {
+				fmt.Printf("  [agent] CHAIN blocked (text): %s — not an investigation query\n", toolName)
+				a.history = append(a.history, ChatMessage{
+					Role:    "assistant",
+					Content: resp.Message.Content,
+				})
+				a.history = append(a.history, ChatMessage{
+					Role:    "tool",
+					Content: `{"skipped": true, "reason": "This is a simple query. Do NOT call additional investigation tools. Present the results you already have to the user now."}`,
+				})
+				continue
+			}
+
 			fmt.Println("  [agent] Detected tool call in text output, executing...")
 			a.history = append(a.history, resp.Message)
 
@@ -321,7 +346,51 @@ func (a *Agent) Ask(question string) (string, error) {
 			continue
 		}
 
-		// No tool calls — this is the final answer
+		// No tool calls — check if investigation is incomplete before returning.
+		// Only force-call remaining tools when the user asked an investigation
+		// question ("why is X slow?"). Simple queries like "show me alerts"
+		// must NOT snowball into the full 6-tool chain.
+		invDone := countInvestigationTools(calledTools)
+		if invDone >= 2 && invDone < 6 && isInvestigationQuery(question) {
+			// LLM tried to stop early during a multi-tool investigation.
+			// Force-call the remaining investigation tools programmatically.
+			fmt.Printf("  [agent] Investigation incomplete (%d/6 tools). Force-calling remaining tools.\n", invDone)
+			a.history = append(a.history, ChatMessage{Role: "assistant", Content: resp.Message.Content})
+
+			forceArg := a.extractInvestigationTarget(calledTools)
+			for _, toolName := range investigationSequence {
+				if calledTools[toolName] > 0 {
+					continue
+				}
+				calledTools[toolName]++
+				call := tools.ToolCall{Name: toolName}
+				switch toolName {
+				case "search_alerts":
+					call.Arguments = map[string]string{"query": forceArg}
+				case "investigate_resource":
+					call.Arguments = map[string]string{"resource_name": forceArg}
+				case "correlate_network", "blast_radius", "get_remediation_plan":
+					call.Arguments = map[string]string{"resource_name": forceArg}
+				case "search_knowledge_base":
+					call.Arguments = map[string]string{"query": forceArg}
+				}
+				fmt.Printf("  -> Force-calling tool: %s(%v)\n", toolName, call.Arguments)
+				opts := tools.ExecuteOptions{KB: a.kb, Juniper: a.juniper}
+				toolResult, err := tools.ExecuteWithOptions(a.client, call, opts)
+				if err != nil {
+					toolResult = fmt.Sprintf(`{"error": "%s"}`, err.Error())
+				}
+				if len(toolResult) > maxToolResultLen {
+					toolResult = toolResult[:maxToolResultLen] + `...{"truncated": true}`
+				}
+				a.history = append(a.history, ChatMessage{Role: "tool", Content: toolResult})
+			}
+			progress := buildProgressChecklist(calledTools)
+			a.history = append(a.history, ChatMessage{Role: "tool", Content: progress})
+			continue
+		}
+
+		// Actually done — return the final answer
 		answer := resp.Message.Content
 		a.history = append(a.history, ChatMessage{
 			Role:    "assistant",
@@ -477,6 +546,78 @@ func buildDuplicateGuidance(calledTools map[string]int) string {
 	return "All investigation tools have been called. Now compose your final comprehensive answer combining ALL the results you have received."
 }
 
+// isInvestigationQuery returns true when the user's question is asking for a
+// full multi-tool investigation ("why is X slow?", "investigate X", "diagnose X").
+// Simple queries like "show me alerts" or "list resources" return false.
+// This prevents the progress checklist and force-call safety net from
+// snowballing a simple query into the full 6-tool investigation chain.
+func isInvestigationQuery(question string) bool {
+	q := strings.ToLower(strings.TrimSpace(question))
+	patterns := []string{
+		"why is ", "why are ", "why does ", "why do ",
+		"what's wrong with ", "what is wrong with ",
+		"investigate ", "diagnose ", "troubleshoot ",
+		"root cause", "rca for ", "rca of ",
+		"what happened to ", "what's happening with ",
+		"what is happening with ",
+		"end-to-end", "e2e", "full investigation",
+	}
+	for _, p := range patterns {
+		if strings.Contains(q, p) {
+			return true
+		}
+	}
+	// Also match questions ending with problem-indicating words
+	suffixes := []string{"slow", "slow?", "down", "down?", "broken", "broken?",
+		"failing", "failing?", "unreachable", "unreachable?",
+		"not working", "not working?", "having issues", "having issues?",
+		"degraded", "degraded?", "timing out", "timing out?"}
+	for _, s := range suffixes {
+		if strings.HasSuffix(q, s) {
+			return true
+		}
+	}
+	return false
+}
+
+// extractInvestigationTarget scans the conversation history to find the resource
+// or application name that was used in previous investigation tool calls.
+// This is used by the force-call safety net to pass the right argument when
+// the LLM stops calling tools early during a multi-tool investigation.
+func (a *Agent) extractInvestigationTarget(calledTools map[string]int) string {
+	// Strategy: look at the user's last message and extract the target name.
+	// The user question is typically "Why is X slow?" or "Investigate X".
+	for i := len(a.history) - 1; i >= 0; i-- {
+		msg := a.history[i]
+		if msg.Role != "user" {
+			continue
+		}
+		// Try to extract the subject from common patterns
+		q := strings.ToLower(msg.Content)
+		// Split on common delimiters and look for resource-like names
+		for _, pattern := range []string{
+			"why is the ", "why is ", "investigate ", "what's wrong with ",
+			"diagnose ", "troubleshoot ", "check ", "analyze ",
+		} {
+			if idx := strings.Index(q, pattern); idx >= 0 {
+				rest := strings.TrimSpace(msg.Content[idx+len(pattern):])
+				// Remove trailing punctuation and common suffixes
+				rest = strings.TrimRight(rest, "?!.,;:")
+				for _, suffix := range []string{" slow", " down", " broken", " failing", " having issues", " not working", " unreachable"} {
+					rest = strings.TrimSuffix(strings.ToLower(rest), suffix)
+				}
+				rest = strings.TrimSpace(rest)
+				if rest != "" {
+					return rest
+				}
+			}
+		}
+		// Fallback: return the full question as the query
+		return strings.TrimRight(strings.TrimSpace(msg.Content), "?!.,;:")
+	}
+	return "" // should never happen — Ask/AskStream always append a user message first
+}
+
 // =========================================================================
 // Streaming Support — Server-Sent Events (SSE)
 // =========================================================================
@@ -508,7 +649,7 @@ func (a *Agent) AskStream(question string, emit func(StreamEvent)) {
 		Content: question,
 	})
 
-	maxRounds := 12
+	maxRounds := 16
 	calledTools := make(map[string]int)
 
 	emit(StreamEvent{Type: "status", Text: "Analyzing your question…"})
@@ -524,6 +665,7 @@ func (a *Agent) AskStream(question string, emit func(StreamEvent)) {
 		if len(resp.Message.ToolCalls) > 0 {
 			a.history = append(a.history, resp.Message)
 
+			toolsExecutedThisRound := 0
 			for _, tc := range resp.Message.ToolCalls {
 				toolName := tc.Function.Name
 				calledTools[toolName]++
@@ -535,6 +677,17 @@ func (a *Agent) AskStream(question string, emit func(StreamEvent)) {
 					a.history = append(a.history, ChatMessage{
 						Role:    "tool",
 						Content: fmt.Sprintf(`{"skipped": true, "reason": "You already called %s.", "next_action": "%s"}`, toolName, guidance),
+					})
+					continue
+				}
+
+				// For simple (non-investigation) queries, block chaining investigation tools.
+				// Allow the FIRST investigation tool, but block subsequent ones.
+				if !isInvestigationQuery(question) && isInvestigationTool(toolName) && countInvestigationTools(calledTools) > 1 {
+					fmt.Printf("  [agent] CHAIN blocked (stream): %s — not an investigation query\n", toolName)
+					a.history = append(a.history, ChatMessage{
+						Role:    "tool",
+						Content: `{"skipped": true, "reason": "This is a simple query. Do NOT call additional investigation tools. Present the results you already have to the user now."}`,
 					})
 					continue
 				}
@@ -552,10 +705,28 @@ func (a *Agent) AskStream(question string, emit func(StreamEvent)) {
 					Role:    "tool",
 					Content: toolResult,
 				})
+				toolsExecutedThisRound++
 			}
 
-			// Only inject progress checklist during genuine multi-tool investigations
-			if countInvestigationTools(calledTools) >= 2 {
+			// If ALL tool calls this round were blocked (duplicates/chain)
+			// and all 6 investigation tools are done, stop looping.
+			// The LLM is stuck — give it one hard nudge to compose the answer.
+			if toolsExecutedThisRound == 0 && countInvestigationTools(calledTools) >= 6 {
+				fmt.Printf("  [agent] All 6 tools done but LLM still calling duplicates — forcing final answer\n")
+				a.history = append(a.history, ChatMessage{
+					Role:    "tool",
+					Content: `{"_progress": {"status": "complete", "instruction": "STOP. ALL 6 investigation tools have been called and results received. Do NOT call any more tools. Compose your final comprehensive answer NOW using all the tool results above."}}`,
+				})
+				// Don't continue — let the next iteration produce a text answer.
+				// But if the LLM still calls tools, the duplicate blocker +
+				// this same check will catch it again (with only a few wasted rounds).
+				continue
+			}
+
+			// Only inject progress checklist during genuine multi-tool investigations.
+			// Guard with isInvestigationQuery so simple queries ("show me alerts")
+			// don't snowball into the full 6-tool chain.
+			if countInvestigationTools(calledTools) >= 2 && isInvestigationQuery(question) {
 				progress := buildProgressChecklist(calledTools)
 				a.history = append(a.history, ChatMessage{Role: "tool", Content: progress})
 			}
@@ -579,6 +750,17 @@ func (a *Agent) AskStream(question string, emit func(StreamEvent)) {
 				continue
 			}
 
+			// For simple (non-investigation) queries, block chaining investigation tools.
+			if !isInvestigationQuery(question) && isInvestigationTool(toolName) && countInvestigationTools(calledTools) > 1 {
+				fmt.Printf("  [agent] CHAIN blocked (stream/text): %s — not an investigation query\n", toolName)
+				a.history = append(a.history, ChatMessage{Role: "assistant", Content: resp.Message.Content})
+				a.history = append(a.history, ChatMessage{
+					Role:    "tool",
+					Content: `{"skipped": true, "reason": "This is a simple query. Do NOT call additional investigation tools. Present the results you already have to the user now."}`,
+				})
+				continue
+			}
+
 			emit(StreamEvent{Type: "status", Text: fmt.Sprintf("Calling %s …", toolDisplayName(toolName))})
 
 			a.history = append(a.history, resp.Message)
@@ -592,15 +774,71 @@ func (a *Agent) AskStream(question string, emit func(StreamEvent)) {
 			}
 			a.history = append(a.history, ChatMessage{Role: "tool", Content: toolResult})
 
-			// Only inject progress checklist during genuine multi-tool investigations
-			if countInvestigationTools(calledTools) >= 2 {
+			// Only inject progress checklist during genuine multi-tool investigations.
+			// Guard with isInvestigationQuery so simple queries ("show me alerts")
+			// don't snowball into the full 6-tool chain.
+			if countInvestigationTools(calledTools) >= 2 && isInvestigationQuery(question) {
 				progress := buildProgressChecklist(calledTools)
 				a.history = append(a.history, ChatMessage{Role: "tool", Content: progress})
 			}
 			continue
 		}
 
-		// --- Final answer — stream it token-by-token ---
+		// --- Final answer — but first check if investigation is incomplete ---
+		// Only force-call when the user asked an investigation question.
+		invDone := countInvestigationTools(calledTools)
+		if invDone >= 2 && invDone < 6 && isInvestigationQuery(question) {
+			// The LLM tried to stop early during a multi-tool investigation.
+			// Force-call the remaining investigation tools programmatically.
+			fmt.Printf("  [agent] Investigation incomplete (%d/6 tools). Force-calling remaining tools.\n", invDone)
+
+			// Save the premature answer — we'll discard it and let the LLM
+			// re-compose after ALL tool results are in.
+			a.history = append(a.history, ChatMessage{Role: "assistant", Content: resp.Message.Content})
+
+			// Build the resource argument from previously called tool results.
+			forceArg := a.extractInvestigationTarget(calledTools)
+
+			for _, toolName := range investigationSequence {
+				if calledTools[toolName] > 0 {
+					continue // already called
+				}
+				calledTools[toolName]++
+
+				// Build arguments based on tool type
+				call := tools.ToolCall{Name: toolName}
+				switch toolName {
+				case "search_alerts":
+					call.Arguments = map[string]string{"query": forceArg}
+				case "investigate_resource":
+					call.Arguments = map[string]string{"resource_name": forceArg}
+				case "correlate_network", "blast_radius", "get_remediation_plan":
+					call.Arguments = map[string]string{"resource_name": forceArg}
+				case "search_knowledge_base":
+					call.Arguments = map[string]string{"query": forceArg}
+				}
+
+				emit(StreamEvent{Type: "status", Text: fmt.Sprintf("Calling %s …", toolDisplayName(toolName))})
+				fmt.Printf("  -> Force-calling tool: %s(%v)\n", toolName, call.Arguments)
+
+				opts := tools.ExecuteOptions{KB: a.kb, Juniper: a.juniper}
+				toolResult, err := tools.ExecuteWithOptions(a.client, call, opts)
+				if err != nil {
+					toolResult = fmt.Sprintf(`{"error": "%s"}`, err.Error())
+				}
+				if len(toolResult) > maxToolResultLen {
+					toolResult = toolResult[:maxToolResultLen] + `...{"truncated": true}`
+				}
+				a.history = append(a.history, ChatMessage{Role: "tool", Content: toolResult})
+			}
+
+			// Inject final progress checklist telling LLM to compose the answer
+			progress := buildProgressChecklist(calledTools)
+			a.history = append(a.history, ChatMessage{Role: "tool", Content: progress})
+			continue // go back to LLM for a new answer with ALL results
+		}
+
+		// --- Actually done — stream the final answer ---
 		answer := resp.Message.Content
 		a.history = append(a.history, ChatMessage{Role: "assistant", Content: answer})
 
@@ -805,16 +1043,22 @@ TOOL USAGE RULES:
 - When a user asks about runbooks, troubleshooting procedures, how to fix something, escalation contacts, or incident response steps, use the search_knowledge_base tool.
 - For overview/summary questions about the infrastructure (e.g., "give me an environment summary", "how many resources do we have?"), use the get_environment_summary tool.
 - Do NOT describe what tool you would use in text. Actually invoke the tool using the function calling mechanism.
+- NEVER write "Let's proceed with..." or "Next steps:" or "We need to check..." — instead, ACTUALLY CALL the tools silently.
 - NEVER invent resource names like "Server-A" or "Database-X". All data must come from tool results.
-- When the user mentions an application name (e.g., "greenlake portal", "greenlake-portal", "aruba-central", "dscc-console"), you can pass it directly to correlate_network, blast_radius, or get_remediation_plan. You do NOT need to first look up the server name — the tools resolve application names to servers automatically.
+- When the user mentions an application name (e.g., "greenlake-ops-portal", "greenlake portal", "aruba-central", "dscc-console"), you can pass it directly to correlate_network, blast_radius, or get_remediation_plan. You do NOT need to first look up the server name — the tools resolve application names to servers automatically.
 
 MULTI-TOOL INVESTIGATION (CRITICAL — READ CAREFULLY):
-When a user asks WHY something is slow, broken, or having issues (e.g., "Why is the GreenLake portal slow?",
-"What's wrong with aruba-central?", "Investigate the DSCC issues"), you MUST run a FULL multi-tool
-investigation. Do NOT stop after just one tool. The slowness could be caused by server-level problems
-(high CPU, memory, disk), application-level alerts, OR network-level issues. You must check ALL layers.
+When a user asks WHY something is slow, broken, or having issues, OR asks you to investigate something
+(e.g., "Why is the greenlake-ops-portal slow?", "Why is the GreenLake portal slow?",
+"What's wrong with aruba-central?", "Investigate the DSCC issues", "Why is web-server-prod-01 having issues?"),
+you MUST run a FULL multi-tool investigation. Do NOT stop after just one tool. The slowness could be caused
+by server-level problems (high CPU, memory, disk), application-level alerts, OR network-level issues.
+You must check ALL layers.
 
-Call ALL of the following 6 tools in this exact sequence:
+CRITICAL: You MUST call ALL 6 tools below by making function calls. Do NOT describe or list
+the tools in your text response. Do NOT write "Let's proceed with correlate_network" — just CALL it.
+If you find yourself writing text that describes what tool you would call next, STOP and actually
+call the tool instead. Your text response should ONLY appear AFTER all 6 tools have been called.
 
   Step 1: search_alerts(query="<app or service name, e.g., greenlake>")
           → Find any active alerts related to the application or its hosting infrastructure.
@@ -849,9 +1093,11 @@ After calling ALL SIX tools, compile a comprehensive response that covers:
   5. Runbook Reference — relevant troubleshooting procedures from the knowledge base
   6. Remediation Plan — step-by-step fix with commands and approval requirements
 
-DO NOT respond after just ONE or TWO tool calls. The investigation is NOT complete until you have
-called at minimum search_alerts, investigate_resource, correlate_network, blast_radius, AND
-get_remediation_plan. Only then should you compose your final answer combining all results.
+DO NOT respond with ANY text after just ONE or TWO tool calls. DO NOT write "Let's proceed with the next steps" or
+list remaining tools in text. The investigation is NOT complete until you have CALLED (not described)
+at minimum search_alerts, investigate_resource, correlate_network, blast_radius, AND
+get_remediation_plan. Call each tool silently. Only compose your final answer text AFTER all tool results
+have been received. If you catch yourself writing a plan instead of calling tools, STOP and call the next tool.
 
 AFTER receiving ALL tool results:
 - Lead with a brief root cause summary stating whether it's a server or network issue

@@ -7,16 +7,20 @@ import (
 // GetResources returns realistic multi-cloud infrastructure resource data.
 func GetResources() []opsramp.Resource {
 	return []opsramp.Resource{
-		// ── AWS US-EAST-1 (Production Web/App Tier) ───────────────────────
+		// ── HPE GreenLake Datacenter (Production Web Tier on HPE ProLiant) ─
+		// web-server-prod-01 is an on-prem HPE ProLiant server connected to
+		// Juniper sw-dc-east-01:ge-0/0/1 — this enables network correlation.
 		{
 			ID: "res-001", Name: "web-server-prod-01",
 			HostName: "web-server-prod-01", IPAddress: "10.0.1.101",
 			Type: "Linux", State: "active", OSName: "Ubuntu 22.04",
 			AgentInstalled: true, Status: "managed", ResourceType: "Linux",
-			Cloud: "AWS", Region: "us-east-1", InstanceSize: "c5.2xlarge",
-			Tags:    map[string]string{"env": "production", "team": "platform", "role": "web", "tier": "frontend"},
+			Cloud: "HPE GreenLake", Region: "hpe-dc-east",
+			Tags:    map[string]string{"env": "production", "team": "platform", "role": "web", "tier": "frontend", "hardware": "HPE ProLiant DL360"},
 			Metrics: getWebServerMetrics(),
 		},
+
+		// ── AWS US-EAST-1 (Production App Tier) ─────────────────────────
 		{
 			ID: "res-002", Name: "app-server-prod-01",
 			HostName: "app-server-prod-01", IPAddress: "10.0.1.102",

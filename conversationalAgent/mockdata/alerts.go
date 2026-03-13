@@ -31,7 +31,7 @@ func GetAlerts() []opsramp.Alert {
 				HostName: "web-server-prod-01", IPAddress: "10.0.1.101",
 				Type: "Linux", State: "active", OSName: "Ubuntu 22.04",
 				AgentInstalled: true, Status: "managed", ResourceType: "Linux",
-				Cloud: "AWS", Region: "us-east-1", InstanceSize: "c5.2xlarge",
+				Cloud: "HPE GreenLake", Region: "hpe-dc-east",
 			},
 			Metric:      "system.cpu.utilization",
 			MonitorName: "CPU Utilization Monitor",

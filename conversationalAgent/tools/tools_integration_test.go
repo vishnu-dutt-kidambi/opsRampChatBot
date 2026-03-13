@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"opsramp-agent/juniper"
+	"opsramp-agent/knowledge"
 	"opsramp-agent/mockdata"
 	"opsramp-agent/opsramp"
 	"strings"
@@ -74,6 +75,18 @@ func min(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// setupKB creates a real knowledge base by loading the operations runbook PDF.
+// Requires Ollama running locally with nomic-embed-text model.
+// Tests using this helper are skipped if Ollama is unavailable.
+func setupKB(t *testing.T) *knowledge.KnowledgeBase {
+	t.Helper()
+	kb := knowledge.NewKnowledgeBase("http://localhost:11434", "nomic-embed-text")
+	if err := kb.LoadPDF("../runbooks/opsramp_operations_runbook.pdf"); err != nil {
+		t.Skipf("Skipping: KB load failed (requires Ollama running with nomic-embed-text): %v", err)
+	}
+	return kb
 }
 
 // =============================================================================
@@ -307,7 +320,7 @@ func TestTool07_PredictCapacity_All(t *testing.T) {
 }
 
 // =============================================================================
-// Tool 8: search_knowledge_base — skipped (needs Ollama embeddings)
+// Tool 8: search_knowledge_base
 // =============================================================================
 
 func TestTool08_SearchKnowledgeBase_NoKB(t *testing.T) {
@@ -322,6 +335,26 @@ func TestTool08_SearchKnowledgeBase_NoKB(t *testing.T) {
 	}
 	assertContains(t, "search_knowledge_base(no-kb)", result, "Knowledge base not loaded")
 	t.Log("search_knowledge_base(no-kb): correctly reports KB not loaded")
+}
+
+func TestTool08_SearchKnowledgeBase_WithRunbook(t *testing.T) {
+	// Load the real operations runbook PDF and search it.
+	kb := setupKB(t)
+	ops, _ := setupClients()
+
+	call := ToolCall{Name: "search_knowledge_base", Arguments: map[string]string{"query": "high CPU usage troubleshooting"}}
+	result, err := ExecuteWithOptions(ops, call, ExecuteOptions{KB: kb})
+	if err != nil {
+		t.Fatalf("search_knowledge_base returned error: %v", err)
+	}
+
+	data := assertValidJSON(t, "search_knowledge_base", result)
+	count, _ := data["count"].(float64)
+	if count == 0 {
+		t.Error("Expected at least 1 KB search result for 'high CPU usage troubleshooting'")
+	}
+	assertContains(t, "search_knowledge_base(cpu)", result, "content")
+	t.Logf("search_knowledge_base(cpu): %d results from runbook", int(count))
 }
 
 // =============================================================================
@@ -363,15 +396,15 @@ func TestTool09_CorrelateNetwork_AppName(t *testing.T) {
 
 func TestTool09_CorrelateNetwork_CleanPort(t *testing.T) {
 	ops, jun := setupClients()
-	// web-server-prod-01 has a clean switch port (no network issues)
-	result := execTool(t, ops, jun, "correlate_network", map[string]string{"resource_name": "web-server-prod-01"})
+	// app-server-prod-01 has a clean switch port (no network issues)
+	result := execTool(t, ops, jun, "correlate_network", map[string]string{"resource_name": "app-server-prod-01"})
 	data := assertValidJSON(t, "correlate_network", result)
 
 	networkIsRoot, _ := data["network_is_likely_root_cause"].(bool)
 	if networkIsRoot {
-		t.Error("Expected network_is_likely_root_cause=false for web-server-prod-01 (clean port)")
+		t.Error("Expected network_is_likely_root_cause=false for app-server-prod-01 (clean port)")
 	}
-	t.Logf("correlate_network(web-server-prod-01): network_is_root=%v (correct — clean port)", networkIsRoot)
+	t.Logf("correlate_network(app-server-prod-01): network_is_root=%v (correct — clean port)", networkIsRoot)
 }
 
 // =============================================================================
@@ -440,8 +473,8 @@ func TestTool11_GetRemediationPlan_AppName(t *testing.T) {
 
 func TestTool11_GetRemediationPlan_CleanResource(t *testing.T) {
 	ops, jun := setupClients()
-	// web-server-prod-01 has no network issues — remediation should return nil/error
-	result := execTool(t, ops, jun, "get_remediation_plan", map[string]string{"resource_name": "web-server-prod-01"})
+	// app-server-prod-01 has no network issues — remediation should return nil/error
+	result := execTool(t, ops, jun, "get_remediation_plan", map[string]string{"resource_name": "app-server-prod-01"})
 	// Either returns an error or returns a plan with 0 steps (depending on implementation)
 	assertValidJSON(t, "get_remediation_plan(clean)", result)
 	t.Logf("get_remediation_plan(clean-resource): %s", result[:min(200, len(result))])
@@ -527,8 +560,24 @@ func TestE2E_GreenlakePortalSlowInvestigation(t *testing.T) {
 		t.Error("Step 4: Expected affected_users > 0")
 	}
 
-	// Step 5: search_knowledge_base — skip (needs Ollama)
-	t.Log("Step 5: search_knowledge_base — SKIPPED (requires Ollama for embeddings)")
+	// Step 5: search_knowledge_base — query runbook for network/switch troubleshooting
+	t.Log("Step 5: search_knowledge_base(network switch port flapping)")
+	kb := setupKB(t)
+	opts.KB = kb
+	result5, err := ExecuteWithOptions(ops, ToolCall{
+		Name:      "search_knowledge_base",
+		Arguments: map[string]string{"query": "network switch port flapping troubleshooting"},
+	}, opts)
+	if err != nil {
+		t.Fatalf("Step 5 failed: %v", err)
+	}
+	var kbResult map[string]interface{}
+	json.Unmarshal([]byte(result5), &kbResult)
+	kbCount, _ := kbResult["count"].(float64)
+	t.Logf("  → Knowledge base returned %d results", int(kbCount))
+	if kbCount == 0 {
+		t.Error("Step 5: Expected KB results for network/switch troubleshooting")
+	}
 
 	// Step 6: get_remediation_plan — generate fix
 	t.Log("Step 6: get_remediation_plan(greenlake-portal)")
@@ -558,6 +607,172 @@ func TestE2E_GreenlakePortalSlowInvestigation(t *testing.T) {
 	t.Logf("Impact: %d apps, %d users affected (%s severity)", int(affectedApps), int(affectedUsers), severity)
 	t.Logf("Fix: %d-step remediation plan generated", int(totalSteps))
 	t.Log("=== ALL 6 STEPS PASSED ===")
+}
+
+// =============================================================================
+// End-to-End Integration: "Why is web-server-prod-01 having issues?" flow
+// This exercises ALL tools including real KB (from runbook PDF) and network
+// correlation (compound incident: CRC errors + packet loss on switch port).
+// =============================================================================
+
+func TestE2E_WebServerProd01Investigation(t *testing.T) {
+	ops, jun := setupClients()
+	kb := setupKB(t) // skips when Ollama is unavailable
+	opts := ExecuteOptions{Juniper: jun, KB: kb}
+
+	t.Log("=== E2E Integration: 'Why is web-server-prod-01 having issues?' ===")
+
+	// -------------------------------------------------------------------------
+	// Step 1: search_alerts — find alerts mentioning web-server-prod-01
+	// -------------------------------------------------------------------------
+	t.Log("Step 1: search_alerts(resource_name=web-server-prod-01)")
+	result1, err := ExecuteWithOptions(ops, ToolCall{
+		Name:      "search_alerts",
+		Arguments: map[string]string{"resource_name": "web-server-prod-01"},
+	}, opts)
+	if err != nil {
+		t.Fatalf("Step 1 failed: %v", err)
+	}
+	var alerts map[string]interface{}
+	json.Unmarshal([]byte(result1), &alerts)
+	alertCount, _ := alerts["count"].(float64)
+	t.Logf("  → Found %d alerts for web-server-prod-01", int(alertCount))
+	if alertCount == 0 {
+		t.Fatal("Step 1: Expected alerts for web-server-prod-01, got none")
+	}
+	assertContains(t, "search_alerts(web-server-prod-01)", result1, "CPU utilization exceeded 95%")
+
+	// -------------------------------------------------------------------------
+	// Step 2: investigate_resource — deep-dive on web-server-prod-01
+	// -------------------------------------------------------------------------
+	t.Log("Step 2: investigate_resource(web-server-prod-01)")
+	result2, err := ExecuteWithOptions(ops, ToolCall{
+		Name:      "investigate_resource",
+		Arguments: map[string]string{"resource_name": "web-server-prod-01"},
+	}, opts)
+	if err != nil {
+		t.Fatalf("Step 2 failed: %v", err)
+	}
+	var inv map[string]interface{}
+	json.Unmarshal([]byte(result2), &inv)
+	cpu, _ := inv["cpuPercent"].(float64)
+	invAlerts, _ := inv["alertCount"].(float64)
+	t.Logf("  → CPU: %.1f%%, Active Alerts: %d", cpu, int(invAlerts))
+	if cpu == 0 {
+		t.Error("Step 2: Expected non-zero CPU for web-server-prod-01")
+	}
+	if invAlerts == 0 {
+		t.Error("Step 2: Expected active alerts for web-server-prod-01")
+	}
+
+	// -------------------------------------------------------------------------
+	// Step 3: correlate_network — check switch port for network issues
+	// Expects: compound incident (RxErrors + packet loss + latency + jitter + flap)
+	// -------------------------------------------------------------------------
+	t.Log("Step 3: correlate_network(web-server-prod-01)")
+	result3, err := ExecuteWithOptions(ops, ToolCall{
+		Name:      "correlate_network",
+		Arguments: map[string]string{"resource_name": "web-server-prod-01"},
+	}, opts)
+	if err != nil {
+		t.Fatalf("Step 3 failed: %v", err)
+	}
+	var netCorr map[string]interface{}
+	json.Unmarshal([]byte(result3), &netCorr)
+	networkRoot, _ := netCorr["network_is_likely_root_cause"].(bool)
+	issueCount, _ := netCorr["issue_count"].(float64)
+	verdict, _ := netCorr["verdict"].(string)
+	t.Logf("  → Network is root cause: %v, Issues: %d, Verdict: %s", networkRoot, int(issueCount), verdict)
+	if !networkRoot {
+		t.Error("Step 3: Expected network_is_likely_root_cause=true (RxErrors + packet loss)")
+	}
+	if issueCount < 2 {
+		t.Errorf("Step 3: Expected at least 2 network issues, got %d", int(issueCount))
+	}
+	assertContains(t, "correlate_network(web-server-prod-01)", result3, "sw-dc-east-01", "ge-0/0/1")
+
+	// -------------------------------------------------------------------------
+	// Step 4: blast_radius — assess downstream impact
+	// web-server-prod-01 → greenlake-ops-portal → user groups
+	// -------------------------------------------------------------------------
+	t.Log("Step 4: blast_radius(web-server-prod-01)")
+	result4, err := ExecuteWithOptions(ops, ToolCall{
+		Name:      "blast_radius",
+		Arguments: map[string]string{"resource_name": "web-server-prod-01"},
+	}, opts)
+	if err != nil {
+		t.Fatalf("Step 4 failed: %v", err)
+	}
+	var blast map[string]interface{}
+	json.Unmarshal([]byte(result4), &blast)
+	affectedUsers, _ := blast["affected_users"].(float64)
+	affectedApps, _ := blast["affected_applications"].(float64)
+	severity, _ := blast["overall_severity"].(string)
+	t.Logf("  → Affected: %d apps, %d users, Severity: %s", int(affectedApps), int(affectedUsers), severity)
+	if affectedApps == 0 {
+		t.Error("Step 4: Expected affected_applications > 0 (greenlake-ops-portal depends on web-server-prod-01)")
+	}
+	if affectedUsers == 0 {
+		t.Error("Step 4: Expected affected_users > 0 (greenlake-tenants, hpe-ops-team)")
+	}
+
+	// -------------------------------------------------------------------------
+	// Step 5: search_knowledge_base — query real runbook for CPU troubleshooting
+	// Uses real KB loaded from runbooks/opsramp_operations_runbook.pdf
+	// -------------------------------------------------------------------------
+	t.Log("Step 5: search_knowledge_base(high CPU and network troubleshooting)")
+	result5, err := ExecuteWithOptions(ops, ToolCall{
+		Name:      "search_knowledge_base",
+		Arguments: map[string]string{"query": "high CPU usage network errors troubleshooting server"},
+	}, opts)
+	if err != nil {
+		t.Fatalf("Step 5 failed: %v", err)
+	}
+	var kbResult map[string]interface{}
+	json.Unmarshal([]byte(result5), &kbResult)
+	kbCount, _ := kbResult["count"].(float64)
+	t.Logf("  → Knowledge base returned %d relevant results", int(kbCount))
+	if kbCount == 0 {
+		t.Error("Step 5: Expected KB results for CPU/network troubleshooting query")
+	}
+	assertContains(t, "search_knowledge_base(cpu-network)", result5, "content")
+
+	// -------------------------------------------------------------------------
+	// Step 6: get_remediation_plan — generate actionable fix steps
+	// Network issues exist → remediation plan should have steps for cable/port fixes
+	// -------------------------------------------------------------------------
+	t.Log("Step 6: get_remediation_plan(web-server-prod-01)")
+	result6, err := ExecuteWithOptions(ops, ToolCall{
+		Name:      "get_remediation_plan",
+		Arguments: map[string]string{"resource_name": "web-server-prod-01"},
+	}, opts)
+	if err != nil {
+		t.Fatalf("Step 6 failed: %v", err)
+	}
+	var plan map[string]interface{}
+	json.Unmarshal([]byte(result6), &plan)
+	totalSteps, _ := plan["total_steps"].(float64)
+	rootCause, _ := plan["root_cause"].(string)
+	t.Logf("  → Remediation: %d steps, Root Cause: %s", int(totalSteps), rootCause)
+	if totalSteps == 0 {
+		t.Error("Step 6: Expected at least 1 remediation step for web-server-prod-01")
+	}
+	assertContains(t, "get_remediation_plan(web-server-prod-01)", result6, "step")
+
+	// -------------------------------------------------------------------------
+	// Final Summary
+	// -------------------------------------------------------------------------
+	t.Log("")
+	t.Log("=== E2E SUMMARY ===")
+	t.Logf("Query: 'Why is web-server-prod-01 having issues?'")
+	t.Logf("Findings:")
+	t.Logf("  - Alert: CPU utilization exceeded 95%% (Critical)")
+	t.Logf("  - CPU: %.1f%%, Alerts: %d", cpu, int(invAlerts))
+	t.Logf("  - Network: %d issues — network IS root cause (compound: CRC errors + packet loss)", int(issueCount))
+	t.Logf("  - Impact: %d apps, %d users affected (%s severity)", int(affectedApps), int(affectedUsers), severity)
+	t.Logf("  - Knowledge Base: %d relevant runbook entries found", int(kbCount))
+	t.Logf("  - Remediation: %d-step plan generated (root cause: %s)", int(totalSteps), rootCause)
+	t.Log("=== ALL 6 STEPS PASSED (full chain with real KB + network correlation) ===")
 }
 
 // =============================================================================
