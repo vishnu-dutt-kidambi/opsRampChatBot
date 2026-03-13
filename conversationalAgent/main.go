@@ -46,7 +46,7 @@ func main() {
 	}
 
 	logln("╔══════════════════════════════════════════════════════════════╗")
-	logln("║              OpsRamp ChatBot                                ║")
+	logln("║              HPE Autopilot                                  ║")
 	logln("║         Powered by Ollama + Tool-Calling LLM               ║")
 	logln("╠══════════════════════════════════════════════════════════════╣")
 	logf("║  LLM:    %-49s ║\n", llmModel)

@@ -276,11 +276,11 @@ txt(lx3 + 1.6 + 0.3, Y_LEGEND, 'Interface', fs=10, fc='#3b82f6', ha='left')
 
 # ── Save ───────────────────────────────────────────────────
 plt.subplots_adjust(left=0.02, right=0.98, top=0.98, bottom=0.02)
-out = '/Users/a60168034/go/src/ai/opsRampChatBot/conversationalAgent/screenshots/opsramp_autopilot_flow.png'
+out = '/Users/a60168034/go/src/ai/opsRampChatBot/conversationalAgent/screenshots/hpe_autopilot_flow.png'
 plt.savefig(out, dpi=200, bbox_inches='tight', facecolor='white', edgecolor='none')
 print(f"Saved: {out}")
 
 # Also save to the old name for backward compat
-out2 = '/Users/a60168034/go/src/ai/opsRampChatBot/conversationalAgent/screenshots/hpe_autopilot_flow.png'
+out2 = '/Users/a60168034/go/src/ai/opsRampChatBot/conversationalAgent/screenshots/opsramp_autopilot_flow.png'
 plt.savefig(out2, dpi=200, bbox_inches='tight', facecolor='white', edgecolor='none')
 print(f"Saved: {out2}")

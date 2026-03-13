@@ -1,5 +1,5 @@
 # =============================================================================
-# Makefile - OpsRamp ChatBot
+# Makefile - HPE Autopilot
 # =============================================================================
 # Run 'make help' to see all available commands.
 #
@@ -18,7 +18,7 @@
 # Default target
 help: ## Show this help message
 	@echo ""
-	@echo "OpsRamp ChatBot - Available Commands:"
+	@echo "HPE Autopilot - Available Commands:"
 	@echo "=================================================="
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | \
 		awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36mmake %-15s\033[0m %s\n", $$1, $$2}'
@@ -41,7 +41,7 @@ help: ## Show this help message
 
 setup: ## [FIRST TIME] Install Ollama natively and download models (~5GB total)
 	@echo "=========================================="
-	@echo "  Setting up OpsRamp ChatBot"
+	@echo "  Setting up HPE Autopilot"
 	@echo "=========================================="
 	@echo ""
 	@if command -v ollama > /dev/null 2>&1; then \

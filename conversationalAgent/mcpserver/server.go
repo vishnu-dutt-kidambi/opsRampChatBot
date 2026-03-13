@@ -1,4 +1,4 @@
-// Package mcpserver exposes the OpsRamp ChatBot tools as a Model Context Protocol
+// Package mcpserver exposes the HPE Autopilot tools as a Model Context Protocol
 // (MCP) server. This allows any MCP-compatible client (Claude Desktop, VS Code
 // Copilot, Cursor, custom agents, etc.) to discover and call our 11 operational
 // tools over stdio or HTTP.

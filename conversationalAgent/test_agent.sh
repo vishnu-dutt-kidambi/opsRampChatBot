@@ -1,6 +1,6 @@
 #!/bin/bash
 # =============================================================================
-# OpsRamp ChatBot — Automated Test Suite
+# HPE Autopilot — Automated Test Suite
 # =============================================================================
 # Tests all agent flows via the HTTP API and validates responses.
 #
@@ -92,7 +92,7 @@ except:
 }
 
 echo ""
-echo "🧪 OpsRamp ChatBot — Test Suite"
+echo "🧪 HPE Autopilot — Test Suite"
 echo "=============================================="
 echo "Target: $BASE"
 echo ""
