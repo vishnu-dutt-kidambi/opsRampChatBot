@@ -6,11 +6,11 @@ Built with **Go + Ollama**, using a tool-calling agent pattern over OpsRamp APIs
 
 ## Web UI
 
-![HPE Autopilot Web UI](conversationalAgent/screenshots/web-ui.png)
+![HPE Autopilot Web UI](conversationalAgent/images/web-ui.png)
 
 ## MCP Server (VS Code Copilot)
 
-![HPE Autopilot MCP Server](conversationalAgent/screenshots/mcp-server.png)
+![HPE Autopilot MCP Server](conversationalAgent/images/mcp-server.png)
 
 ## What You Can Ask
 
