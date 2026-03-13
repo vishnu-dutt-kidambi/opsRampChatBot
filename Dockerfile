@@ -1,5 +1,5 @@
 # =============================================================================
-# Dockerfile - OpsRamp ChatBot (full workspace build)
+# Dockerfile - HPE Autopilot (full workspace build)
 # =============================================================================
 # Build context must be the repository root so both Go modules
 # (conversationalAgent + pdfReaderAIAgent) are available.

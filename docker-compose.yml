@@ -1,5 +1,5 @@
 # =============================================================================
-# Docker Compose - OpsRamp ChatBot (Full Stack)
+# Docker Compose - HPE Autopilot (Full Stack)
 # =============================================================================
 #
 # TWO MODES:
@@ -94,7 +94,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: opsramp-mcp
+    container_name: hpe-autopilot-mcp
     depends_on:
       ollama:
         condition: service_healthy

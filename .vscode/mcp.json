@@ -1,6 +1,6 @@
 {
     "servers": {
-        "opsRamp-mcp-server": {
+        "hpe-autopilot-mcp-server": {
             "type": "stdio",
             "command": "${workspaceFolder}/conversationalAgent/opsramp-agent",
             "args": [

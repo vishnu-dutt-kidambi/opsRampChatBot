@@ -1,43 +1,50 @@
-# OpsRamp ChatBot
+# HPE Autopilot
 
-An AI-powered opsRamp assistant that lets you query your IT infrastructure using natural language. Ask about alerts, resources, incidents, capacity forecasts, and operations runbooks — the agent figures out what to look up and responds with clear, actionable answers.
+An AI-powered IT operations assistant that lets you query your infrastructure using natural language. Ask about alerts, resources, incidents, capacity forecasts, network health, and operations runbooks — the agent figures out what to look up and responds with clear, actionable answers.
 
-Built with **Go + Ollama**, using a tool-calling agent pattern over mock OpsRamp APIs. Also runs as an **MCP server** for integration with VS Code Copilot, Claude Desktop, and other MCP-compatible clients.
+Built with **Go + Ollama**, using a tool-calling agent pattern over OpsRamp APIs (currently mock) and Juniper switch telemetry. Also runs as an **MCP server** for integration with VS Code Copilot, Claude Desktop, and other MCP-compatible clients.
 
 ## Web UI
 
-![OpsRamp Agent Web UI](conversationalAgent/screenshots/web-ui.png)
+![HPE Autopilot Web UI](conversationalAgent/screenshots/web-ui.png)
 
 ## MCP Server (VS Code Copilot)
 
-![OpsRamp Agent MCP Server](conversationalAgent/screenshots/mcp-server.png)
+![HPE Autopilot MCP Server](conversationalAgent/screenshots/mcp-server.png)
 
 ## What You Can Ask
 
 - **Alerts** — "Show me all critical alerts" · "Any P0 alerts?"
-- **Resources** — "List all AWS resources" · "Show servers in GCP"
+- **Resources** — "List all AWS resources" · "Show HPE GreenLake servers"
 - **Incidents** — "Show open incidents" · "Any urgent tickets?"
 - **Investigation** — "Investigate web-server-prod-01" · "Why is the DB slow?"
 - **Environment** — "Give me an environment summary"
 - **Capacity Forecast** — "Predict capacity for db-primary-01" · "Which resources are at risk?"
 - **Knowledge Base** — "What is the runbook for high CPU?" · "How to fix disk full?" · "Escalation contacts?"
+- **Network Correlation** — "Correlate network for k8s-node-04" · "Is the network causing latency?"
+- **Blast Radius** — "What's the blast radius for k8s-node-04?" · "How many users are affected?"
+- **Guided Remediation** — "Give me a remediation plan for k8s-node-04" · "How do I fix the network issue?"
+- **End-to-End** — "Why is the GreenLake portal slow?" (agent chains 6 tools autonomously)
 
 ## Capabilities
 
 | Tool | Description |
 |------|-------------|
 | **Search Alerts** | Filter by state (Critical/Warning), priority, resource |
-| **Search Resources** | Find servers across AWS, Azure, GCP, on-prem |
+| **Search Resources** | Find servers across AWS, Azure, HPE GreenLake, on-prem |
 | **Resource Details** | Deep-dive into configuration, metrics, tags |
 | **Search Incidents** | Filter tickets by status, priority, SLA |
 | **Investigate Resource** | Correlated view of alerts + incidents + metrics for a resource |
 | **Environment Summary** | High-level infrastructure health dashboard |
 | **Capacity Forecasting** | Linear regression on 30-day metric history to predict CPU/memory/disk exhaustion |
 | **Knowledge Base (RAG)** | Retrieval-augmented generation over operations runbooks (PDF) using vector embeddings |
+| **Network Correlation** | Correlate server issues with Juniper switch telemetry (packet loss, CRC errors, link flaps, latency, jitter, duplex) |
+| **Blast Radius** | Map impact of infrastructure issues across applications, services, and user groups via dependency graph traversal |
+| **Guided Remediation** | Generate step-by-step remediation plans with exact Junos CLI commands, risk levels, and approval gates |
 
 ## How MCP Mode Works
 
-In MCP mode, **Copilot (or Claude) is the LLM** — not Ollama. The agent acts as a tool server only.
+In MCP mode, **Copilot (or Claude) is the LLM** — not Ollama. HPE Autopilot acts as a tool server only.
 
 ```
 You (in VS Code / Claude Desktop)
@@ -47,9 +54,9 @@ Copilot / Claude  ← decides which tools to call
  │
  │  MCP protocol (stdio or HTTP)
  ▼
-opsramp-agent --mcp  ← executes tools, returns JSON
+hpe-autopilot --mcp  ← executes tools, returns JSON
  │
- ├─ search_alerts, search_resources, etc. → mock OpsRamp data
+ ├─ search_alerts, search_resources, etc. → OpsRamp data
  └─ search_knowledge_base → Ollama embeddings (only Ollama use in MCP mode)
  │
  ▼
@@ -58,7 +65,7 @@ Copilot / Claude  ← summarizes results back to you
 
 - **Ollama LLM is NOT used** in MCP mode — Copilot's own model handles reasoning and tool selection
 - **Ollama is only needed** for the embedding model (`nomic-embed-text`) that powers runbook search
-- The 8 tools + their descriptions are advertised via MCP's `initialize` handshake
+- The 11 tools + their descriptions are advertised via MCP's `initialize` handshake
 
 ---
 
@@ -77,24 +84,39 @@ make run        # Terminal REPL
 make web        # Browser chat UI on http://localhost:8080
 make mcp        # MCP server (stdio) — for Claude Desktop, VS Code, etc.
 make mcp-http   # MCP server (HTTP) on http://localhost:8081
+
+# Other commands
+make build      # Build the Go binary
+make clean      # Remove build artifacts
+make test       # Run tests
+make fmt        # Format Go code
+make vet        # Run Go vet
+make lint       # Run all linters (fmt + vet)
+make help       # Show all available commands
 ```
 
-### Docker
+### Docker (from repo root)
 
 ```bash
 # Mac (recommended) — App in Docker, Ollama native on host (fast, GPU)
 make docker-web-mac
 
 # Full Docker — Everything in containers (portable, CPU-only on Mac)
-make docker-setup    # First time: pull Ollama image + download models
+make docker-setup    # First time: pull Ollama image + download models (~8GB)
+make docker-build    # Build the Docker image
 make docker-web      # Start Web UI at http://localhost:8080
+make docker-mcp      # Start MCP HTTP server at http://localhost:8081
+make docker-cli      # Run interactive CLI in Docker
+make docker-logs     # Show logs for all running services
+make docker-down     # Stop all containers
+make docker-clean    # Stop containers and remove images + volumes
 ```
 
 ## Simulated Environment
 
 The mock data simulates a mid-size enterprise with:
 
-- **22 resources** across AWS, Azure, GCP, and on-prem (VMware)
+- **22 resources** across AWS, Azure, HPE GreenLake, and on-prem (VMware)
 - **8 active alerts** (3 Critical, 3 Warning, 2 Info)
 - **7 incidents** (5 Open, 2 Resolved)
 - Resource types: Linux, Windows, Azure SQL, Azure Functions, VMware ESXi
@@ -129,20 +151,20 @@ User Question
 
 Dual-Mode Architecture:
 ┌───────────────────────────────────────────────────────┐
-│                  opsramp-agent binary                  │
+│                HPE Autopilot binary                    │
 ├───────────┬──────────┬──────────────┬─────────────────┤
 │ CLI REPL  │ Web UI   │ MCP (stdio)  │ MCP (HTTP)      │
 │ (default) │ (--web)  │ (--mcp)      │ (--mcp-http)    │
 ├───────────┴──────────┴──────────────┴─────────────────┤
-│              Shared Tool Layer (8 tools)              │
-│              OpsRamp Client + Knowledge Base          │
+│             Shared Tool Layer (11 tools)              │
+│          OpsRamp Client + Juniper + Knowledge Base    │
 └───────────────────────────────────────────────────────┘
 ```
 
 ## Project Structure
 
 ```
-opsRampChatBot/                         # Umbrella repo (Go workspace)
+HPEAutopilot/                           # Umbrella repo (Go workspace)
 ├── go.work                             # Go workspace: ties both modules together
 ├── Dockerfile                          # Multi-stage Docker build (root context)
 ├── docker-compose.yml                  # Docker orchestration (Ollama + Web/MCP/CLI)
@@ -154,7 +176,7 @@ opsRampChatBot/                         # Umbrella repo (Go workspace)
 │   ├── launch.json                     # Debug configs for both projects
 │   └── mcp.json                        # MCP server config for VS Code Copilot
 │
-├── conversationalAgent/                # OpsRamp ChatBot (main project)
+├── conversationalAgent/                # HPE Autopilot (main project)
 │   ├── main.go                         # CLI entry point + mode routing (CLI/Web/MCP)
 │   ├── server.go                       # Web server (chat API + embedded UI)
 │   ├── Makefile                        # Native build & run commands
@@ -162,7 +184,7 @@ opsRampChatBot/                         # Umbrella repo (Go workspace)
 │   ├── agent/
 │   │   └── agent.go                    # LLM orchestrator (tool-calling loop)
 │   ├── tools/
-│   │   └── tools.go                    # Tool definitions + execution dispatcher (8 tools)
+│   │   └── tools.go                    # Tool definitions + execution dispatcher (11 tools)
 │   ├── mcpserver/
 │   │   └── server.go                   # MCP server — wraps tools for stdio/HTTP transport
 │   ├── knowledge/
@@ -171,11 +193,16 @@ opsRampChatBot/                         # Umbrella repo (Go workspace)
 │   │   ├── models.go                   # OpsRamp API data models
 │   │   ├── client.go                   # Mock API client with filtering
 │   │   └── forecast.go                 # Capacity forecasting (linear regression)
+│   ├── juniper/
+│   │   ├── models.go                   # Juniper network + blast radius + remediation models
+│   │   └── client.go                   # Juniper client (correlation, blast radius, remediation)
 │   ├── mockdata/
 │   │   ├── alerts.go                   # Realistic alert data
 │   │   ├── resources.go                # Multi-cloud resource inventory
 │   │   ├── incidents.go                # Incident/ticket data
-│   │   └── metric_history.go           # 30-day metric series
+│   │   ├── metric_history.go           # 30-day metric series
+│   │   ├── network.go                  # Juniper switch telemetry + port mappings
+│   │   └── dependencies.go             # Infrastructure dependency graph (blast radius topology)
 │   ├── runbooks/
 │   │   └── opsramp_operations_runbook.pdf  # Operations runbook (9 sections)
 │   ├── web/
@@ -224,10 +251,13 @@ opsRampChatBot/                         # Umbrella repo (Go workspace)
 | `get_environment_summary` | Dashboard API | High-level environment overview |
 | `predict_capacity` | Metrics + linear regression | Forecast resource usage & days until threshold |
 | `search_knowledge_base` | RAG over PDF runbooks | Search operations runbooks via embeddings |
+| `correlate_network` | Juniper Mist API | Correlate server issues with switch port telemetry |
+| `blast_radius` | Dependency graph traversal | Map impact across apps, services, and user groups |
+| `get_remediation_plan` | Junos CLI generation | Step-by-step remediation with commands and approvals |
 
 ## MCP Server Mode
 
-The agent can run as a [Model Context Protocol (MCP)](https://modelcontextprotocol.io) server, exposing all 8 tools to any MCP-compatible client without requiring a local LLM. The MCP client's own LLM decides which tools to call.
+HPE Autopilot can run as a [Model Context Protocol (MCP)](https://modelcontextprotocol.io) server, exposing all 11 tools to any MCP-compatible client without requiring a local LLM. The MCP client's own LLM decides which tools to call.
 
 ### Transports
 
@@ -256,7 +286,7 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 
 ### VS Code / Copilot Configuration
 
-Add to `.vscode/mcp.json` in the `opsRampChatBot` workspace root:
+Add to `.vscode/mcp.json` in the `HPEAutopilot` workspace root:
 
 ```json
 {
@@ -283,7 +313,7 @@ Add to `.vscode/mcp.json` in the `opsRampChatBot` workspace root:
 | **Tool calling** | Agent orchestrates tool loop | MCP client orchestrates |
 | **Transport** | Terminal / HTTP chat API | stdio or Streamable HTTP (MCP protocol) |
 | **Conversation** | Multi-turn with history | Stateless per tool call |
-| **Use case** | Standalone chatbot | Composable tool server |
+| **Use case** | Standalone assistant | Composable tool server |
 
 ## RoadMap Ideas
 
@@ -291,15 +321,19 @@ Add to `.vscode/mcp.json` in the `opsRampChatBot` workspace root:
 - [x] **Phase 2**: Web UI with browser-based chat (go:embed)
 - [x] **Phase 3**: Capacity forecasting with linear regression
 - [x] **Phase 4**: Knowledge base — RAG over PDF runbooks (current)
-- [x] **Phase 5**: MCP server mode — dual-mode binary serves as both standalone chatbot AND MCP tool server
+- [x] **Phase 5**: MCP server mode — dual-mode binary serves as both standalone assistant AND MCP tool server
   - Stdio transport for Claude Desktop, VS Code Copilot (--mcp flag)
   - Streamable HTTP transport for remote MCP clients (--mcp-http flag)
-  - All 8 tools auto-converted from Ollama format to MCP format via mcp-go SDK
-- [ ] **Phase 6**: Multi-MCP agent architecture — generic agent orchestrator discovers and composes MCP servers dynamically
+  - All 11 tools auto-converted from Ollama format to MCP format via mcp-go SDK
+- [x] **Phase 6**: Cross-domain intelligence — Juniper network correlation, blast radius analysis, and guided remediation
+  - Network correlation: match servers to Juniper switch ports, analyze port-level telemetry
+  - Blast radius: traverse infrastructure dependency graph to map affected apps/services/users
+  - Guided remediation: generate Junos CLI commands with risk levels and approval gates
+  - End-to-end scenario: "Why is the GreenLake portal slow?" → 6 autonomous tool calls → actionable fix
+- [ ] **Phase 7**: Multi-MCP agent architecture — generic agent orchestrator discovers and composes MCP servers dynamically
   - MCP Gateway (auth, rate-limiting, observability across servers)
   - Off-the-shelf MCP servers for Jira, PagerDuty, Slack (replace custom integrations)
   - Agent mesh — specialist agents (Ops, Dev, Security) coordinating via shared MCP infrastructure
-- [ ] **Phase 7**: Real OpsRamp API integration (OAuth2 + tenant config)
-- [ ] **Phase 8**: Proactive insights + recommendations
+- [ ] **Phase 8**: Real OpsRamp API integration (OAuth2 + tenant config)
 - [ ] **Phase 9**: Actionable operations (acknowledge alerts, create incidents)
 - [ ] **Phase 10**: Slack/Teams integration
